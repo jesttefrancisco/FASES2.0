@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 import os, tempfile, shutil
 from datetime import datetime
+from supabase import create_client
 
 st.set_page_config(
     page_title="Control Fases SFCO211",
@@ -15,6 +16,81 @@ st.set_page_config(
 BASE = os.path.join(os.path.dirname(__file__), "CONTROL_FASES_SFCO211.xlsx")
 LOGO = os.path.join(os.path.dirname(__file__), "logo_san_francisco.png")
 PHASES = ["FASE1", "FASE2", "FASE3", "FASE4"]
+
+@st.cache_resource(show_spinner=False)
+def get_supabase():
+    try:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["service_role_key"]
+        return create_client(url, key)
+    except Exception:
+        return None
+
+def db_ready():
+    return get_supabase() is not None
+
+def db_phase_updates():
+    client = get_supabase()
+    if client is None:
+        return []
+    try:
+        res = client.table("phase_updates").select("*").execute()
+        return res.data or []
+    except Exception:
+        return []
+
+def db_upsert_phase_update(phase, excel_row, activity, percent, username):
+    client = get_supabase()
+    if client is None:
+        return False
+    payload = {
+        "phase": phase,
+        "excel_row": int(excel_row),
+        "activity": str(activity),
+        "percent": float(percent),
+        "updated_by": str(username),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        client.table("phase_updates").upsert(
+            payload, on_conflict="phase,excel_row,activity"
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+def db_weekly_history():
+    client = get_supabase()
+    if client is None:
+        return []
+    try:
+        res = client.table("weekly_history").select("*").order("update_date").execute()
+        return res.data or []
+    except Exception:
+        return []
+
+def db_register_weekly(summaries, general, username):
+    client = get_supabase()
+    if client is None:
+        return False, "Base de datos no configurada."
+    date_value = datetime.now().date().isoformat()
+    payload = {
+        "update_date": date_value,
+        "general": float(general),
+        "fase1": float(summaries["FASE1"]),
+        "fase2": float(summaries["FASE2"]),
+        "fase3": float(summaries["FASE3"]),
+        "fase4": float(summaries["FASE4"]),
+        "updated_by": str(username),
+    }
+    try:
+        client.table("weekly_history").upsert(
+            payload, on_conflict="update_date"
+        ).execute()
+        return True, f"Actualización semanal guardada en línea: {date_value}."
+    except Exception as e:
+        return False, f"No se pudo guardar en la base de datos: {e}"
+
 
 st.markdown("""
 <style>
@@ -159,6 +235,20 @@ def load_phase(path, phase):
     wb.close()
     df = pd.DataFrame(rows, columns=headers)
     df["_excel_row"] = excel_rows
+
+    for upd in db_phase_updates():
+        try:
+            if upd.get("phase") != phase:
+                continue
+            excel_row = int(upd.get("excel_row"))
+            activity = upd.get("activity")
+            pct = float(upd.get("percent"))
+            if activity in df.columns:
+                mask = df["_excel_row"] == excel_row
+                if mask.any():
+                    df.loc[mask, activity] = from_percent(pct, phase)
+        except Exception:
+            pass
     return df
 
 def phase_editor_df(path, phase):
@@ -282,10 +372,12 @@ def save_department(path, phase, excel_row, activity_values):
     headers = [c.value for c in ws[1]]
     header_to_col = {str(h): i+1 for i,h in enumerate(headers) if h is not None}
 
+    username = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
     for activity, pct in activity_values.items():
         col = header_to_col.get(activity)
         if col:
             ws.cell(excel_row, col).value = from_percent(pct, phase)
+            db_upsert_phase_update(phase, excel_row, activity, pct, username)
 
     recalc_department_progress(ws, excel_row, phase)
     wb.save(path)
@@ -336,6 +428,8 @@ def save_full_phase(path, phase, edited_df, original_df):
                 continue
 
             ws.cell(excel_row, excel_col).value = from_percent(new_num, phase)
+            username = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
+            db_upsert_phase_update(phase, excel_row, col, new_num, username)
             changed_rows.add(excel_row)
             changed_cells += 1
 
@@ -431,92 +525,79 @@ def route_overall(path):
     return round(float(vals.mean()),1) if len(vals) else 0.0
 
 def ensure_history_sheet(path):
-    """Crea la hoja HISTORIAL_SEMANAL si aún no existe."""
     wb = load_workbook(path)
     if "HISTORIAL_SEMANAL" not in wb.sheetnames:
         ws = wb.create_sheet("HISTORIAL_SEMANAL")
         ws.append([
-            "Fecha actualización",
-            "Avance General",
-            "Fase 1",
-            "Fase 2",
-            "Fase 3",
-            "Fase 4",
-            "Usuario"
+            "Fecha actualización","Avance General","Fase 1","Fase 2","Fase 3","Fase 4","Usuario"
         ])
-        ws.freeze_panes = "A2"
-        ws.column_dimensions["A"].width = 20
-        ws.column_dimensions["B"].width = 18
-        ws.column_dimensions["C"].width = 14
-        ws.column_dimensions["D"].width = 14
-        ws.column_dimensions["E"].width = 14
-        ws.column_dimensions["F"].width = 14
-        ws.column_dimensions["G"].width = 22
     wb.save(path)
     wb.close()
 
 def register_weekly_snapshot(path, summaries, general, username, force=False):
-    """
-    Registra una sola actualización por fecha.
-    La regla normal es viernes. Un Administrador puede forzar el registro.
-    """
-    ensure_history_sheet(path)
     now = datetime.now()
-    is_friday = now.weekday() == 4
-
-    if not is_friday and not force:
+    if now.weekday() != 4 and not force:
         return False, "La actualización semanal corresponde a los viernes."
 
+    if db_ready():
+        ok, msg = db_register_weekly(summaries, general, username)
+        if not ok:
+            return False, msg
+    else:
+        msg = "Base online no configurada; se guardará solo en el Excel de esta sesión."
+
+    ensure_history_sheet(path)
     date_value = now.strftime("%Y-%m-%d")
     wb = load_workbook(path)
     ws = wb["HISTORIAL_SEMANAL"]
-
-    # Evitar duplicar una actualización del mismo día.
+    target_row = None
     for r in range(2, ws.max_row + 1):
         existing = ws.cell(r, 1).value
         if existing is not None and str(existing)[:10] == date_value:
-            wb.close()
-            return False, f"Ya existe una actualización registrada para {date_value}."
-
-    ws.append([
-        date_value,
-        float(general),
-        float(summaries["FASE1"]),
-        float(summaries["FASE2"]),
-        float(summaries["FASE3"]),
-        float(summaries["FASE4"]),
-        username
-    ])
-
-    # Formato visible como porcentaje (los valores guardados ya son 0–100).
-    for c in range(2, 7):
-        ws.cell(ws.max_row, c).number_format = '0.0"%"'
-
+            target_row = r
+            break
+    vals = [
+        date_value,float(general),float(summaries["FASE1"]),float(summaries["FASE2"]),
+        float(summaries["FASE3"]),float(summaries["FASE4"]),username
+    ]
+    if target_row:
+        for c,v in enumerate(vals, start=1):
+            ws.cell(target_row,c).value = v
+    else:
+        ws.append(vals)
     wb.save(path)
     wb.close()
-    return True, f"Actualización semanal registrada: {date_value}."
+    return True, msg
 
 @st.cache_data(show_spinner=False)
 def load_weekly_history(path):
+    rows = db_weekly_history()
+    if rows:
+        df = pd.DataFrame(rows).rename(columns={
+            "update_date":"Fecha actualización",
+            "general":"Avance General",
+            "fase1":"Fase 1",
+            "fase2":"Fase 2",
+            "fase3":"Fase 3",
+            "fase4":"Fase 4",
+            "updated_by":"Usuario",
+        })
+        df["Fecha actualización"] = pd.to_datetime(df["Fecha actualización"], errors="coerce")
+        return df.sort_values("Fecha actualización")
+
     try:
         wb = load_workbook(path, read_only=True, data_only=True)
         if "HISTORIAL_SEMANAL" not in wb.sheetnames:
             wb.close()
-            return pd.DataFrame(columns=[
-                "Fecha actualización","Avance General","Fase 1","Fase 2","Fase 3","Fase 4","Usuario"
-            ])
+            return pd.DataFrame()
         ws = wb["HISTORIAL_SEMANAL"]
         rows = list(ws.iter_rows(values_only=True))
         wb.close()
         if len(rows) <= 1:
-            return pd.DataFrame(columns=rows[0] if rows else [
-                "Fecha actualización","Avance General","Fase 1","Fase 2","Fase 3","Fase 4","Usuario"
-            ])
+            return pd.DataFrame()
         df = pd.DataFrame(rows[1:], columns=rows[0])
         df["Fecha actualización"] = pd.to_datetime(df["Fecha actualización"], errors="coerce")
-        for c in ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        return df.dropna(subset=["Fecha actualización"]).sort_values("Fecha actualización")
+        return df.sort_values("Fecha actualización")
     except Exception:
         return pd.DataFrame()
 
@@ -561,6 +642,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"👤 {st.session_state.get('user_name','Usuario')}")
     st.caption(f"Rol: {st.session_state.get('user_role','Usuario')}")
+    st.caption("🟢 Base online conectada" if db_ready() else "🟠 Base online no configurada")
     if st.button("🚪 Cerrar sesión", use_container_width=True):
         st.session_state.authenticated=False
         st.session_state.pop("username",None)

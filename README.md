@@ -1,28 +1,26 @@
-# CONTROL FASES SFCO211 — PRO v9
+# CONTROL FASES SFCO211 — PRO v10 SUPABASE
 
-Novedades:
-- Nueva pestaña "Comparación semanal".
-- Registro de avance todos los viernes.
-- Guarda: Avance General + Fase 1 + Fase 2 + Fase 3 + Fase 4 + usuario.
-- Gráfico de líneas para comparar evolución semanal.
-- Comparación contra semana anterior en puntos porcentuales.
-- Historial almacenado en hoja HISTORIAL_SEMANAL del Excel de trabajo.
-- Administrador puede registrar manualmente fuera del viernes para pruebas/regularización.
-- Diseño mejorado para celular.
-- Se mantiene login con usuarios y claves.
-- Se mantienen Dashboard, gráficos por fase, edición de avances y Ruta Crítica.
+Base online compartida para:
+- avances editados de FASE1–FASE4,
+- usuario que realizó el cambio,
+- historial semanal de los viernes,
+- Avance General + Fase 1 + Fase 2 + Fase 3 + Fase 4.
 
-IMPORTANTE:
-En Streamlit Community Cloud el archivo de trabajo vive dentro de la sesión.
-Para que múltiples usuarios compartan un historial permanente sin depender de descargar/subir Excel,
-la siguiente evolución recomendada es conectar una base de datos en línea (por ejemplo Supabase/PostgreSQL).
+Configuración:
+1. Crear proyecto en Supabase.
+2. Ejecutar `supabase_setup.sql` en SQL Editor.
+3. Copiar Project URL y service_role key.
+4. En Streamlit Community Cloud > App settings > Secrets pegar la plantilla
+   `.streamlit/secrets.toml.example` y reemplazar los valores.
+5. Guardar y reiniciar la app.
 
-Archivos a reemplazar en GitHub:
-- app.py
-- requirements.txt
-- CONTROL_FASES_SFCO211.xlsx
-- logo_san_francisco.png
-- README.md
+No publiques claves reales en GitHub.
 
-La carpeta .streamlit contiene solo una plantilla de Secrets; las claves reales deben configurarse
-directamente en Streamlit Community Cloud.
+
+## v11 - Corrección Ruta Crítica
+- Ruta Crítica ya no depende de la columna calculada del Excel.
+- Calcula el avance directamente desde las partidas de SEGUIMIENTO R.CRITICA.
+- Convierte valores 0–1 y 0–100 a una sola escala 0%–100%.
+- Muestra KPI de avance, pisos, departamentos y departamentos con avance.
+- Incluye gráficos por piso, torre y partida.
+- Incluye filtros Torre/Piso y detalle por departamento.
