@@ -1,14 +1,12 @@
-# CONTROL FASES SFCO211 — PRO v5
+# CONTROL FASES SFCO211 — PRO v6
 
-Correcciones principales:
-- FASE1, FASE2, FASE3 y FASE4 ahora se pueden editar directamente desde "Fases completas".
-- Todas las partidas se editan en porcentaje 0%–100%.
-- Fase, Piso, Torre, Departamento y % Avance Real Depto quedan protegidos.
-- Al guardar, % Avance Real Depto se recalcula automáticamente.
-- El Dashboard y los gráficos se actualizan con los cambios.
-- Se mantiene el editor rápido por Torre → Piso → Departamento.
-- Se mantienen gráficos por fase, piso, torre y partida.
-- Logo oficial San Francisco 211 / PAZ integrado.
+Cambio principal:
+- Todos los gráficos y el Dashboard ahora usan como FUENTE ÚNICA los mismos datos que aparecen en "Fases completas".
+- Si editas FASE1, FASE2, FASE3 o FASE4 en "Fases completas" y guardas, los gráficos se recalculan con esos mismos valores.
+- Gráficos por fase, piso, torre y partida.
+- Avances visibles en escala 0%–100%.
+- Se mantiene el editor rápido por departamento.
+- Se mantiene el logo oficial y el archivo CONTROL_FASES_SFCO211.xlsx.
 
 Archivos a reemplazar en GitHub:
 - app.py

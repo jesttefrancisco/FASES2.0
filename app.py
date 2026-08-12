@@ -109,14 +109,17 @@ def phase_editor_df(path, phase):
     return df
 
 def phase_numeric_percent_df(path, phase):
-    df = load_phase(path, phase).copy()
+    """
+    FUENTE ÚNICA PARA GRÁFICOS Y DASHBOARD:
+    toma exactamente los mismos datos transformados que usa "Fases completas".
+    """
+    df = phase_editor_df(path, phase).copy()
+
     id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
     for col in df.columns:
         if col not in id_cols:
-            vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            if phase_scale(phase) == 1.0:
-                vals = vals * 100.0
-            df[col] = vals
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
     return df
 
 def phase_summary(path, phase):
@@ -354,6 +357,7 @@ st.caption("El porcentaje de cada fase corresponde al promedio de «% Avance Rea
 st.divider()
 
 if page == "📊 Dashboard":
+    st.info("Fuente de los indicadores y gráficos: datos actuales de «Fases completas».")
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),
@@ -368,7 +372,7 @@ if page == "📊 Dashboard":
     st.write("")
     left,right=st.columns([1.25,1])
     with left:
-        st.markdown('<div class="section">AVANCE GENERAL POR FASE</div>',unsafe_allow_html=True)
+        st.markdown('<div class="section">AVANCE GENERAL POR FASE · DESDE FASES COMPLETAS</div>',unsafe_allow_html=True)
         chart=pd.DataFrame({
             "Fase":["Fase 1","Fase 2","Fase 3","Fase 4"],
             "Avance (%)":[summaries[p] for p in PHASES],
@@ -384,15 +388,15 @@ if page == "📊 Dashboard":
             st.write(f"**{p.replace('FASE','Fase ')} — {v:.1f}%**")
             st.progress(min(max(v/100,0),1))
 
-    st.markdown('<div class="section">AVANCE POR PISO</div>',unsafe_allow_html=True)
+    st.markdown('<div class="section">AVANCE POR PISO · DESDE FASES COMPLETAS</div>',unsafe_allow_html=True)
     selected_phase=st.selectbox("Fase para detalle",PHASES,format_func=lambda x:x.replace("FASE","Fase "))
     piso=phase_by_floor(st.session_state.workbook_path,selected_phase)
     if not piso.empty:
         st.bar_chart(piso.set_index("Piso"),height=330)
 
 elif page == "📈 Gráficos por fase":
-    st.markdown('<div class="section">GRÁFICOS DE CADA FASE</div>',unsafe_allow_html=True)
-    st.caption("Todos los gráficos trabajan en escala 0%–100%.")
+    st.markdown('<div class="section">GRÁFICOS DE CADA FASE · FUENTE: FASES COMPLETAS</div>',unsafe_allow_html=True)
+    st.caption("Todos los gráficos se generan directamente desde los datos de «Fases completas» y trabajan en escala 0%–100%.")
 
     for phase in PHASES:
         st.markdown(f"## {phase.replace('FASE','Fase ')}")
@@ -528,7 +532,7 @@ elif page == "🏢 Fases completas":
             )
             st.success(
                 f"Guardado correctamente: {changed_cells} celdas modificadas "
-                f"en {changed_rows} departamentos."
+                f"en {changed_rows} departamentos. Los gráficos usarán estos mismos datos."
             )
             st.rerun()
 
