@@ -42,6 +42,22 @@ padding:19px 22px;color:white;box-shadow:0 5px 18px rgba(15,35,60,.12)}
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
  background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:5px;
 }
+
+@media (max-width: 768px) {
+  .block-container {padding: .65rem .65rem 1.5rem .65rem;}
+  .sf-title {font-size:22px !important; line-height:1.1;}
+  .sf-sub {font-size:12px !important; margin-bottom:12px;}
+  .card {padding:12px; min-height:96px;}
+  .kvalue {font-size:24px !important;}
+  .phase-pct {font-size:27px !important;}
+  .general-pct {font-size:31px !important;}
+  div[data-testid="stHorizontalBlock"] {gap:.45rem;}
+  [data-testid="stSidebar"] img {max-height:150px; object-fit:contain;}
+  .stButton>button,.stDownloadButton>button {
+      min-height:44px;
+      font-size:15px;
+  }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -414,6 +430,104 @@ def route_overall(path):
     vals=pd.to_numeric(df[col],errors="coerce").dropna()
     return round(float(vals.mean()),1) if len(vals) else 0.0
 
+def ensure_history_sheet(path):
+    """Crea la hoja HISTORIAL_SEMANAL si aún no existe."""
+    wb = load_workbook(path)
+    if "HISTORIAL_SEMANAL" not in wb.sheetnames:
+        ws = wb.create_sheet("HISTORIAL_SEMANAL")
+        ws.append([
+            "Fecha actualización",
+            "Avance General",
+            "Fase 1",
+            "Fase 2",
+            "Fase 3",
+            "Fase 4",
+            "Usuario"
+        ])
+        ws.freeze_panes = "A2"
+        ws.column_dimensions["A"].width = 20
+        ws.column_dimensions["B"].width = 18
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 14
+        ws.column_dimensions["E"].width = 14
+        ws.column_dimensions["F"].width = 14
+        ws.column_dimensions["G"].width = 22
+    wb.save(path)
+    wb.close()
+
+def register_weekly_snapshot(path, summaries, general, username, force=False):
+    """
+    Registra una sola actualización por fecha.
+    La regla normal es viernes. Un Administrador puede forzar el registro.
+    """
+    ensure_history_sheet(path)
+    now = datetime.now()
+    is_friday = now.weekday() == 4
+
+    if not is_friday and not force:
+        return False, "La actualización semanal corresponde a los viernes."
+
+    date_value = now.strftime("%Y-%m-%d")
+    wb = load_workbook(path)
+    ws = wb["HISTORIAL_SEMANAL"]
+
+    # Evitar duplicar una actualización del mismo día.
+    for r in range(2, ws.max_row + 1):
+        existing = ws.cell(r, 1).value
+        if existing is not None and str(existing)[:10] == date_value:
+            wb.close()
+            return False, f"Ya existe una actualización registrada para {date_value}."
+
+    ws.append([
+        date_value,
+        float(general),
+        float(summaries["FASE1"]),
+        float(summaries["FASE2"]),
+        float(summaries["FASE3"]),
+        float(summaries["FASE4"]),
+        username
+    ])
+
+    # Formato visible como porcentaje (los valores guardados ya son 0–100).
+    for c in range(2, 7):
+        ws.cell(ws.max_row, c).number_format = '0.0"%"'
+
+    wb.save(path)
+    wb.close()
+    return True, f"Actualización semanal registrada: {date_value}."
+
+@st.cache_data(show_spinner=False)
+def load_weekly_history(path):
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+        if "HISTORIAL_SEMANAL" not in wb.sheetnames:
+            wb.close()
+            return pd.DataFrame(columns=[
+                "Fecha actualización","Avance General","Fase 1","Fase 2","Fase 3","Fase 4","Usuario"
+            ])
+        ws = wb["HISTORIAL_SEMANAL"]
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        if len(rows) <= 1:
+            return pd.DataFrame(columns=rows[0] if rows else [
+                "Fecha actualización","Avance General","Fase 1","Fase 2","Fase 3","Fase 4","Usuario"
+            ])
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+        df["Fecha actualización"] = pd.to_datetime(df["Fecha actualización"], errors="coerce")
+        for c in ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna(subset=["Fecha actualización"]).sort_values("Fecha actualización")
+    except Exception:
+        return pd.DataFrame()
+
+def next_friday_text():
+    today = datetime.now().date()
+    days = (4 - today.weekday()) % 7
+    if days == 0:
+        return "Hoy corresponde actualización semanal."
+    nxt = today + pd.Timedelta(days=days)
+    return f"Próxima actualización: viernes {nxt.strftime('%d-%m-%Y')}."
+
 def raw_sheet_df(path, sheet_name):
     wb = load_workbook(path, read_only=True, data_only=False)
     ws = wb[sheet_name]
@@ -434,6 +548,7 @@ with st.sidebar:
         "Menú",
         [
             "📊 Dashboard",
+            "📆 Comparación semanal",
             "📈 Gráficos por fase",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
@@ -529,6 +644,111 @@ if page == "📊 Dashboard":
     piso=phase_by_floor(st.session_state.workbook_path,selected_phase)
     if not piso.empty:
         st.bar_chart(piso.set_index("Piso"),height=330)
+
+elif page == "📆 Comparación semanal":
+    st.markdown('<div class="section">COMPARACIÓN DE AVANCE SEMANAL</div>', unsafe_allow_html=True)
+    st.caption(
+        "Esta sección guarda una fotografía del avance del proyecto cada viernes y "
+        "permite comparar la evolución del Avance General y de las cuatro fases."
+    )
+
+    is_friday = datetime.now().weekday() == 4
+    role = st.session_state.get("user_role", "Usuario")
+    user = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
+
+    cstatus, cbutton = st.columns([2,1])
+    with cstatus:
+        if is_friday:
+            st.success("✅ Hoy es viernes: corresponde registrar la actualización semanal.")
+        else:
+            st.info("📅 " + next_friday_text())
+
+    with cbutton:
+        if st.button(
+            "📌 Registrar avance de hoy",
+            type="primary",
+            use_container_width=True
+        ):
+            ok, msg = register_weekly_snapshot(
+                st.session_state.workbook_path,
+                summaries,
+                general,
+                user,
+                force=(role == "Administrador")
+            )
+            load_weekly_history.clear()
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.warning(msg)
+
+    if not is_friday and role == "Administrador":
+        st.caption("Como Administrador puedes registrar manualmente una actualización fuera del viernes para pruebas o regularización.")
+
+    hist = load_weekly_history(st.session_state.workbook_path)
+
+    if hist.empty:
+        st.warning(
+            "Aún no hay semanas registradas. El primer punto aparecerá cuando registres "
+            "una actualización semanal."
+        )
+    else:
+        latest = hist.iloc[-1]
+        k1,k2,k3,k4,k5 = st.columns(5)
+        k1.metric("Avance General", f"{latest['Avance General']:.1f}%")
+        k2.metric("Fase 1", f"{latest['Fase 1']:.1f}%")
+        k3.metric("Fase 2", f"{latest['Fase 2']:.1f}%")
+        k4.metric("Fase 3", f"{latest['Fase 3']:.1f}%")
+        k5.metric("Fase 4", f"{latest['Fase 4']:.1f}%")
+
+        chart_df = hist.copy()
+        chart_df["Semana"] = chart_df["Fecha actualización"].dt.strftime("%d-%m-%Y")
+
+        st.markdown("### Evolución del avance por semana")
+        st.line_chart(
+            chart_df.set_index("Semana")[
+                ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]
+            ],
+            height=430
+        )
+
+        if len(hist) >= 2:
+            prev = hist.iloc[-2]
+            st.markdown("### Variación respecto de la semana anterior")
+            variation = pd.DataFrame({
+                "Indicador":["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"],
+                "Semana anterior":[
+                    prev["Avance General"],prev["Fase 1"],prev["Fase 2"],prev["Fase 3"],prev["Fase 4"]
+                ],
+                "Semana actual":[
+                    latest["Avance General"],latest["Fase 1"],latest["Fase 2"],latest["Fase 3"],latest["Fase 4"]
+                ],
+            })
+            variation["Variación (pp)"] = (
+                variation["Semana actual"] - variation["Semana anterior"]
+            ).round(1)
+            st.dataframe(
+                variation.style.format({
+                    "Semana anterior":"{:.1f}%",
+                    "Semana actual":"{:.1f}%",
+                    "Variación (pp)":"{:+.1f}"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        st.markdown("### Historial de actualizaciones")
+        shown = hist.copy()
+        shown["Fecha actualización"] = shown["Fecha actualización"].dt.strftime("%d-%m-%Y")
+        for c in ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]:
+            shown[c] = shown[c].map(lambda x: f"{x:.1f}%")
+        st.dataframe(shown, use_container_width=True, hide_index=True)
+
+        st.caption(
+            "Los puntos del gráfico corresponden a las fotografías de avance guardadas "
+            "en la hoja HISTORIAL_SEMANAL del archivo de trabajo."
+        )
 
 elif page == "📈 Gráficos por fase":
     st.markdown('<div class="section">GRÁFICOS DE CADA FASE · FUENTE: FASES COMPLETAS</div>',unsafe_allow_html=True)
@@ -741,6 +961,11 @@ elif page == "⚠️ Ruta crítica":
     st.dataframe(rdisplay, use_container_width=True, height=650)
 
 elif page == "⬆️ Importar / Exportar":
+    st.info(
+        "El Excel descargado incluye también el HISTORIAL_SEMANAL registrado en esta sesión, "
+        "para conservar las comparaciones de los viernes."
+    )
+
     uploaded=st.file_uploader("Cargar una nueva versión de CONTROL_FASES_SFCO211.xlsx",type=["xlsx"])
     if uploaded is not None:
         with open(st.session_state.workbook_path,"wb") as f:
