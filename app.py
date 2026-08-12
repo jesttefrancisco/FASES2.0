@@ -29,6 +29,15 @@ st.markdown("""
 .kvalue{font-size:30px;font-weight:850;color:#10233d;margin-top:5px}
 .good{color:#179b59}.warn{color:#e79b13}.bad{color:#df4545}.blue{color:#1678e7}
 .section{font-size:17px;font-weight:850;color:#1b2d47;margin:14px 0 10px}
+.phase-card{background:#fff;border:1px solid #dfe6ef;border-radius:16px;padding:16px 18px;
+box-shadow:0 4px 14px rgba(15,35,60,.05);margin-bottom:8px}
+.phase-name{font-size:12px;font-weight:800;color:#6f7d92;text-transform:uppercase}
+.phase-pct{font-size:35px;font-weight:900;color:#10233d;line-height:1.1;margin-top:4px}
+.general-box{background:linear-gradient(135deg,#102f50 0%,#1769aa 100%);border-radius:17px;
+padding:19px 22px;color:white;box-shadow:0 5px 18px rgba(15,35,60,.12)}
+.general-label{font-size:12px;font-weight:800;opacity:.82;text-transform:uppercase}
+.general-pct{font-size:39px;font-weight:900;line-height:1.05;margin-top:4px}
+
 .stButton>button,.stDownloadButton>button{border-radius:9px;font-weight:750}
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
  background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:5px;
@@ -83,15 +92,20 @@ def load_phase(path, phase):
     df["_excel_row"] = excel_rows
     return df
 
-def phase_display_df(path, phase):
-    df = load_phase(path, phase).drop(columns=["_excel_row"]).copy()
-    id_cols = ["Fase", "Piso", "Torre", "Departamento"]
+def phase_editor_df(path, phase):
+    """
+    Devuelve una copia editable de la fase.
+    Las columnas de avance se presentan como números 0–100 para que Streamlit
+    permita editarlas sin bloquear celdas por tipos mixtos.
+    """
+    df = load_phase(path, phase).copy()
+    id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
     for col in df.columns:
         if col not in id_cols:
-            vals = pd.to_numeric(df[col], errors="coerce")
+            vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
             if phase_scale(phase) == 1.0:
-                vals = vals * 100
-            df[col] = vals.map(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+                vals = vals * 100.0
+            df[col] = vals.round(1)
     return df
 
 def phase_numeric_percent_df(path, phase):
@@ -180,6 +194,61 @@ def save_department(path, phase, excel_row, activity_values):
     load_phase.clear()
     get_sheet_names.clear()
 
+def save_full_phase(path, phase, edited_df, original_df):
+    """
+    Guarda solamente las celdas modificadas de una fase completa.
+    Los porcentajes visibles 0–100 vuelven a la escala interna correcta del Excel.
+    """
+    wb = load_workbook(path)
+    ws = wb[phase]
+
+    id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
+    headers = [c.value for c in ws[1]]
+    header_to_col = {str(h): i+1 for i,h in enumerate(headers) if h is not None}
+
+    changed_rows = set()
+    changed_cells = 0
+
+    for idx in edited_df.index:
+        excel_row = int(original_df.loc[idx, "_excel_row"])
+
+        for col in edited_df.columns:
+            if col in id_cols or col == "% Avance Real Depto":
+                continue
+
+            new_val = edited_df.loc[idx, col]
+            old_val = original_df.loc[idx, col]
+
+            # Compare numerically where possible.
+            try:
+                new_num = float(new_val)
+            except:
+                new_num = 0.0
+            try:
+                old_num = float(old_val)
+            except:
+                old_num = 0.0
+
+            if abs(new_num - old_num) < 1e-9:
+                continue
+
+            excel_col = header_to_col.get(str(col))
+            if not excel_col:
+                continue
+
+            ws.cell(excel_row, excel_col).value = from_percent(new_num, phase)
+            changed_rows.add(excel_row)
+            changed_cells += 1
+
+    for excel_row in changed_rows:
+        recalc_department_progress(ws, excel_row, phase)
+
+    wb.save(path)
+    wb.close()
+    load_phase.clear()
+    get_sheet_names.clear()
+    return changed_cells, len(changed_rows)
+
 def summary_display(path):
     wb = load_workbook(path, read_only=True, data_only=False)
     ws = wb["RESUMEN"]
@@ -259,6 +328,31 @@ st.markdown(
 summaries = {p:phase_summary(st.session_state.workbook_path,p) for p in PHASES}
 general = round(sum(summaries.values())/4,1)
 
+# AVANCE GENERAL SIEMPRE VISIBLE EN TODAS LAS PÁGINAS
+st.markdown('<div class="section">AVANCE GENERAL DEL PROYECTO</div>', unsafe_allow_html=True)
+gcol, p1col, p2col, p3col, p4col = st.columns([1.15,1,1,1,1])
+
+with gcol:
+    st.markdown(
+        f'<div class="general-box"><div class="general-label">Avance General</div>'
+        f'<div class="general-pct">{general:.1f}%</div></div>',
+        unsafe_allow_html=True
+    )
+    st.progress(min(max(general/100,0),1))
+
+for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
+    val = summaries[phase]
+    with col:
+        st.markdown(
+            f'<div class="phase-card"><div class="phase-name">{phase.replace("FASE","Fase ")}</div>'
+            f'<div class="phase-pct">{val:.1f}%</div></div>',
+            unsafe_allow_html=True
+        )
+        st.progress(min(max(val/100,0),1))
+
+st.caption("El porcentaje de cada fase corresponde al promedio de «% Avance Real Depto» de todos los departamentos de esa fase.")
+st.divider()
+
 if page == "📊 Dashboard":
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
@@ -280,6 +374,9 @@ if page == "📊 Dashboard":
             "Avance (%)":[summaries[p] for p in PHASES],
         })
         st.bar_chart(chart.set_index("Fase"),height=330)
+        compare = chart.copy()
+        compare["Avance"] = compare["Avance (%)"].map(lambda x: f"{x:.1f}%")
+        st.dataframe(compare[["Fase","Avance"]], use_container_width=True, hide_index=True)
     with right:
         st.markdown('<div class="section">ESTADO ACTUAL</div>',unsafe_allow_html=True)
         for p in PHASES:
@@ -298,7 +395,9 @@ elif page == "📈 Gráficos por fase":
     st.caption("Todos los gráficos trabajan en escala 0%–100%.")
 
     for phase in PHASES:
-        st.markdown(f"## {phase.replace('FASE','Fase ')} — {summaries[phase]:.1f}%")
+        st.markdown(f"## {phase.replace('FASE','Fase ')}")
+        st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.1f}%")
+        st.progress(min(max(summaries[phase]/100,0),1))
         a,b=st.columns(2)
 
         with a:
@@ -370,12 +469,74 @@ elif page == "🧱 Actualizar avances":
         st.rerun()
 
 elif page == "🏢 Fases completas":
-    phase=st.selectbox("Selecciona una fase",PHASES,format_func=lambda x:x.replace("FASE","Fase "))
-    st.caption("TODAS las partidas y el avance real se muestran en porcentaje.")
-    st.dataframe(
-        phase_display_df(st.session_state.workbook_path,phase),
-        use_container_width=True,height=700
+    st.markdown('<div class="section">EDITAR FASE COMPLETA</div>', unsafe_allow_html=True)
+    st.success("Ahora puedes editar directamente todas las partidas de cada Fase. Los valores se trabajan de 0% a 100%.")
+
+    phase = st.selectbox(
+        "Selecciona una fase",
+        PHASES,
+        format_func=lambda x:x.replace("FASE","Fase ")
     )
+
+    original = phase_editor_df(st.session_state.workbook_path, phase)
+
+    # No mostrar _excel_row en pantalla.
+    visible_cols = [c for c in original.columns if c != "_excel_row"]
+    editor_source = original[visible_cols].copy()
+
+    # Proteger columnas identificadoras y el cálculo total.
+    disabled_cols = ["Fase", "Piso", "Torre", "Departamento", "% Avance Real Depto"]
+
+    st.caption(
+        "Puedes modificar las partidas. Las columnas Fase, Piso, Torre, Departamento y "
+        "% Avance Real Depto quedan protegidas; el avance total se recalcula automáticamente."
+    )
+
+    column_cfg = {}
+    for c in visible_cols:
+        if c not in ["Fase", "Piso", "Torre", "Departamento"]:
+            column_cfg[c] = st.column_config.NumberColumn(
+                c,
+                min_value=0.0,
+                max_value=100.0,
+                step=5.0,
+                format="%.1f%%"
+            )
+
+    edited = st.data_editor(
+        editor_source,
+        use_container_width=True,
+        height=700,
+        num_rows="fixed",
+        disabled=disabled_cols,
+        column_config=column_cfg,
+        key=f"full_editor_{phase}"
+    )
+
+    csave, cinfo = st.columns([1,2])
+    with csave:
+        if st.button("💾 GUARDAR CAMBIOS DE LA FASE", type="primary", use_container_width=True):
+            edited_full = original.copy()
+            for c in visible_cols:
+                edited_full[c] = edited[c]
+
+            changed_cells, changed_rows = save_full_phase(
+                st.session_state.workbook_path,
+                phase,
+                edited_full,
+                original
+            )
+            st.success(
+                f"Guardado correctamente: {changed_cells} celdas modificadas "
+                f"en {changed_rows} departamentos."
+            )
+            st.rerun()
+
+    with cinfo:
+        st.info(
+            "Al guardar, la aplicación recalcula automáticamente el % Avance Real Depto "
+            "de los departamentos modificados y el Dashboard se actualiza."
+        )
 
 elif page == "📋 Resumen":
     st.caption("El RESUMEN se convierte automáticamente a porcentaje según la fase.")
