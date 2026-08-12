@@ -94,31 +94,58 @@ def load_phase(path, phase):
 
 def phase_editor_df(path, phase):
     """
-    Devuelve una copia editable de la fase.
-    Las columnas de avance se presentan como números 0–100 para que Streamlit
-    permita editarlas sin bloquear celdas por tipos mixtos.
+    Devuelve la misma tabla que se usa en "Fases completas".
+    Todas las partidas se muestran en 0-100 y el avance real se recalcula
+    directamente desde las partidas.
     """
     df = load_phase(path, phase).copy()
     id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
-    for col in df.columns:
-        if col not in id_cols:
-            vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            if phase_scale(phase) == 1.0:
-                vals = vals * 100.0
-            df[col] = vals.round(1)
+    progress_col = "% Avance Real Depto"
+
+    activity_cols = [
+        c for c in df.columns
+        if c not in id_cols and c != progress_col
+    ]
+
+    for col in activity_cols:
+        vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        if phase_scale(phase) == 1.0:
+            vals = vals * 100.0
+        df[col] = vals.round(1)
+
+    if activity_cols:
+        df[progress_col] = df[activity_cols].mean(axis=1).round(1)
+    else:
+        df[progress_col] = 0.0
+
     return df
 
 def phase_numeric_percent_df(path, phase):
     """
-    FUENTE ÚNICA PARA GRÁFICOS Y DASHBOARD:
-    toma exactamente los mismos datos transformados que usa "Fases completas".
+    FUENTE ÚNICA PARA DASHBOARD Y GRÁFICOS.
+    Usa exactamente las partidas visibles en "Fases completas" y calcula
+    el % Avance Real Depto directamente desde esas partidas, sin depender
+    de las fórmulas guardadas/caché del Excel.
     """
     df = phase_editor_df(path, phase).copy()
 
     id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
-    for col in df.columns:
-        if col not in id_cols:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    progress_col = "% Avance Real Depto"
+
+    activity_cols = [
+        c for c in df.columns
+        if c not in id_cols and c != progress_col
+    ]
+
+    # Convertir todas las partidas a números 0-100.
+    for col in activity_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    # Recalcular avance real del departamento desde las partidas.
+    if activity_cols:
+        df[progress_col] = df[activity_cols].mean(axis=1).round(2)
+    else:
+        df[progress_col] = 0.0
 
     return df
 
@@ -353,11 +380,11 @@ for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
         )
         st.progress(min(max(val/100,0),1))
 
-st.caption("El porcentaje de cada fase corresponde al promedio de «% Avance Real Depto» de todos los departamentos de esa fase.")
+st.caption("El porcentaje de cada fase se calcula directamente desde las partidas visibles en «Fases completas», por departamento y luego por fase.")
 st.divider()
 
 if page == "📊 Dashboard":
-    st.info("Fuente de los indicadores y gráficos: datos actuales de «Fases completas».")
+    st.info("Fuente de los indicadores y gráficos: partidas actuales de «Fases completas». El avance se recalcula automáticamente, sin depender de fórmulas almacenadas en Excel.")
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),
