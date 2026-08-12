@@ -1,18 +1,24 @@
-# CONTROL FASES SFCO211 — PRO v7
+# CONTROL FASES SFCO211 — PRO v8
 
-Corrección crítica:
-- El avance ya NO depende de la fórmula/caché de "% Avance Real Depto" del Excel.
-- Se calcula directamente desde todas las partidas visibles en "Fases completas".
-- Primero se calcula el avance de cada departamento.
-- Luego se obtiene el avance general de cada Fase.
-- El Dashboard y todos los gráficos usan esos mismos datos.
-- FASE1, FASE2, FASE3 y FASE4 quedan en escala visible 0%–100%.
-- Al editar y guardar una partida, el avance se recalcula inmediatamente.
-- Se mantienen logo, gráficos por piso, torre y partida.
+Cambios:
+- Eliminadas del menú: Terminaciones, Resumen y Avance semanal.
+- Ruta Crítica revisada y normalizada a porcentaje 0%–100%.
+- Ruta Crítica incluye avance promedio, gráfico por piso, gráfico por torre y tabla completa.
+- Los valores 0–1 de Ruta Crítica se convierten a porcentaje automáticamente.
+- Inicio de sesión con usuarios y claves mediante Streamlit Secrets.
+- Incluye ejemplo `.streamlit/secrets.toml.example`.
+- NO se guardan contraseñas reales en GitHub.
 
-Archivos a reemplazar en GitHub:
+Usuarios:
+Configura tus usuarios en Streamlit Community Cloud → App settings → Secrets.
+Usa el contenido de `.streamlit/secrets.toml.example` como plantilla.
+
+Archivos principales a reemplazar:
 - app.py
 - requirements.txt
 - CONTROL_FASES_SFCO211.xlsx
 - logo_san_francisco.png
 - README.md
+
+Además puedes subir:
+- .streamlit/secrets.toml.example (solo ejemplo, no claves reales)

@@ -51,6 +51,59 @@ if "workbook_path" not in st.session_state:
     shutil.copy2(BASE, p)
     st.session_state.workbook_path = p
 
+def get_users():
+    """
+    Usuarios almacenados en Streamlit Secrets.
+    Formato:
+    [users.admin]
+    password = "..."
+    name = "..."
+    role = "Administrador"
+    """
+    try:
+        users = st.secrets.get("users", {})
+        return users
+    except Exception:
+        return {}
+
+def login_screen():
+    users = get_users()
+
+    if not users:
+        st.error("No hay usuarios configurados todavía.")
+        st.info(
+            "Configura los usuarios en Streamlit → App settings → Secrets. "
+            "Usa el formato incluido en el archivo secrets.toml.example."
+        )
+        st.stop()
+
+    st.markdown("## 🔐 Ingreso al Control de Obra")
+    with st.form("login_form"):
+        username = st.text_input("Usuario")
+        password = st.text_input("Clave", type="password")
+        submitted = st.form_submit_button("INGRESAR", use_container_width=True)
+
+    if submitted:
+        if username in users and str(users[username].get("password", "")) == password:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.user_name = users[username].get("name", username)
+            st.session_state.user_role = users[username].get("role", "Usuario")
+            st.rerun()
+        else:
+            st.error("Usuario o clave incorrectos.")
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    if os.path.exists(LOGO):
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.image(LOGO, use_container_width=True)
+    login_screen()
+    st.stop()
+
 def phase_scale(sheet_name):
     # El archivo usa FASE1 en 0-100 y FASE2/3/4 en 0-1.
     return 100.0 if sheet_name == "FASE1" else 1.0
@@ -311,6 +364,56 @@ def summary_display(path):
                 pass
     return df
 
+def normalize_route_pct(value):
+    """Normaliza Ruta Crítica: 0-1 -> 0-100; 0-100 se conserva."""
+    try:
+        if value is None or value == "":
+            return 0.0
+        x = float(value)
+        if 0 <= x <= 1:
+            return x * 100.0
+        if 0 <= x <= 100:
+            return x
+        return x
+    except:
+        return None
+
+@st.cache_data(show_spinner=False)
+def route_critical_data(path):
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb["SEGUIMIENTO R.CRITICA"]
+    headers = [c.value if c.value is not None else f"Columna {i+1}" for i,c in enumerate(ws[1])]
+    rows=[]
+    for r in range(2, ws.max_row+1):
+        vals=[ws.cell(r,c).value for c in range(1,ws.max_column+1)]
+        if not any(v is not None for v in vals):
+            continue
+        rows.append(vals)
+    wb.close()
+    df=pd.DataFrame(rows,columns=headers)
+
+    id_cols = ["Columna 1","Piso","Torre","Departamento"]
+    for col in df.columns:
+        if col not in id_cols:
+            df[col]=df[col].map(normalize_route_pct)
+    return df
+
+def route_critical_display(path):
+    df=route_critical_data(path).copy()
+    id_cols=["Columna 1","Piso","Torre","Departamento"]
+    for col in df.columns:
+        if col not in id_cols:
+            df[col]=df[col].map(lambda x: f"{x:.1f}%" if isinstance(x,(int,float)) else "")
+    return df
+
+def route_overall(path):
+    df=route_critical_data(path)
+    col="Av. Depto/Piso"
+    if col not in df.columns or df.empty:
+        return 0.0
+    vals=pd.to_numeric(df[col],errors="coerce").dropna()
+    return round(float(vals.mean()),1) if len(vals) else 0.0
+
 def raw_sheet_df(path, sheet_name):
     wb = load_workbook(path, read_only=True, data_only=False)
     ws = wb[sheet_name]
@@ -326,6 +429,7 @@ with st.sidebar:
     st.markdown("## CONTROL DE OBRA")
     st.caption("EDIFICIO SAN FRANCISCO 211 · PAZ")
     st.markdown("---")
+
     page = st.radio(
         "Menú",
         [
@@ -333,16 +437,21 @@ with st.sidebar:
             "📈 Gráficos por fase",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
-            "📅 Avance semanal",
             "⚠️ Ruta crítica",
-            "📋 Resumen",
-            "🏁 Terminaciones",
             "⬆️ Importar / Exportar",
         ],
         label_visibility="collapsed",
     )
+
     st.markdown("---")
-    st.caption("CONTROL_FASES_SFCO211.xlsx")
+    st.caption(f"👤 {st.session_state.get('user_name','Usuario')}")
+    st.caption(f"Rol: {st.session_state.get('user_role','Usuario')}")
+    if st.button("🚪 Cerrar sesión", use_container_width=True):
+        st.session_state.authenticated=False
+        st.session_state.pop("username",None)
+        st.session_state.pop("user_name",None)
+        st.session_state.pop("user_role",None)
+        st.rerun()
 
 hlogo, htitle = st.columns([1.1,4.9], vertical_alignment="center")
 with hlogo:
@@ -580,17 +689,56 @@ elif page == "📅 Avance semanal":
     st.dataframe(raw_sheet_df(st.session_state.workbook_path,sh),use_container_width=True,height=700)
 
 elif page == "⚠️ Ruta crítica":
-    names=get_sheet_names(st.session_state.workbook_path)
-    opts=[n for n in names if "CRITICA" in n.upper()]
-    sh=opts[0] if opts else names[0]
-    st.warning("Seguimiento de Ruta Crítica")
-    st.dataframe(raw_sheet_df(st.session_state.workbook_path,sh),use_container_width=True,height=700)
+    st.markdown('<div class="section">RUTA CRÍTICA · AVANCE</div>', unsafe_allow_html=True)
 
-elif page == "🏁 Terminaciones":
-    names=get_sheet_names(st.session_state.workbook_path)
-    opts=[n for n in names if "TERMIN" in n.upper()]
-    sh=opts[0] if opts else names[0]
-    st.dataframe(raw_sheet_df(st.session_state.workbook_path,sh),use_container_width=True,height=700)
+    rdf = route_critical_data(st.session_state.workbook_path)
+    rdisplay = route_critical_display(st.session_state.workbook_path)
+    roverall = route_overall(st.session_state.workbook_path)
+
+    c1,c2,c3 = st.columns(3)
+    c1.metric("AVANCE PROMEDIO RUTA CRÍTICA", f"{roverall:.1f}%")
+
+    if "Piso" in rdf.columns and "Av. Depto/Piso" in rdf.columns:
+        piso_avg = (
+            rdf.groupby("Piso", dropna=True)["Av. Depto/Piso"]
+            .mean()
+            .reset_index()
+        )
+        c2.metric("PISOS CON REGISTRO", str(piso_avg["Piso"].nunique()))
+    else:
+        piso_avg = pd.DataFrame()
+
+    if "Departamento" in rdf.columns:
+        dep_mask = rdf["Departamento"].astype(str).str.lower() != "todos"
+        c3.metric("DEPARTAMENTOS CONTROLADOS", str(int(dep_mask.sum())))
+
+    st.progress(min(max(roverall/100,0),1))
+    st.success(
+        "Ruta Crítica está leyendo y mostrando los avances. "
+        "Los valores en escala decimal (por ejemplo 0,30) se convierten automáticamente a 30%."
+    )
+
+    left,right = st.columns(2)
+    with left:
+        st.markdown("### Avance de Ruta Crítica por piso")
+        if not piso_avg.empty:
+            piso_avg["Av. Depto/Piso"] = piso_avg["Av. Depto/Piso"].round(1)
+            st.bar_chart(piso_avg.set_index("Piso"), height=340)
+
+    with right:
+        st.markdown("### Avance por torre")
+        if "Torre" in rdf.columns and "Av. Depto/Piso" in rdf.columns:
+            tower = (
+                rdf.groupby("Torre", dropna=True)["Av. Depto/Piso"]
+                .mean()
+                .reset_index()
+            )
+            tower["Av. Depto/Piso"] = tower["Av. Depto/Piso"].round(1)
+            st.bar_chart(tower.set_index("Torre"), height=340)
+
+    st.markdown("### Detalle de Ruta Crítica")
+    st.caption("Todas las partidas se muestran como porcentaje 0%–100%.")
+    st.dataframe(rdisplay, use_container_width=True, height=650)
 
 elif page == "⬆️ Importar / Exportar":
     uploaded=st.file_uploader("Cargar una nueva versión de CONTROL_FASES_SFCO211.xlsx",type=["xlsx"])
