@@ -1,167 +1,175 @@
+
 import streamlit as st
-import pandas as pd
+import openpyxl
 from openpyxl import load_workbook
+import pandas as pd
+import os, re, tempfile, shutil
 from io import BytesIO
-import os
-import tempfile
-import shutil
-import re
+from datetime import datetime
 
-st.set_page_config(page_title="Control de Fases | San Francisco", page_icon="🏗️", layout="wide")
-DEFAULT_FILE = os.path.join(os.path.dirname(__file__), "CONTROL_FASES_SAN_FRANCISCO.xlsx")
+st.set_page_config(page_title="Control Fases San Francisco", page_icon="🏗️", layout="wide", initial_sidebar_state="expanded")
+BASE=os.path.join(os.path.dirname(__file__),"CONTROL_FASES_SAN_FRANCISCO.xlsx")
 
-st.markdown("""
+CSS = """
 <style>
-.block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-div[data-testid="stMetric"] {border: 1px solid rgba(128,128,128,.25); padding: 12px; border-radius: 12px;}
-h1, h2, h3 {letter-spacing: -0.02em;}
+[data-testid="stAppViewContainer"]{background:#f5f7fb;}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#061d34 0%,#073459 100%);}
+[data-testid="stSidebar"] *{color:white;}
+.block-container{padding-top:1.4rem;max-width:1600px;}
+.sf-title{font-size:29px;font-weight:800;color:#10213a;margin-bottom:2px}
+.sf-sub{color:#718096;margin-bottom:20px}
+.card{background:white;border:1px solid #e3e8ef;border-radius:14px;padding:18px;box-shadow:0 2px 10px rgba(16,33,58,.04);min-height:126px}
+.klabel{font-size:12px;font-weight:700;color:#667085;text-transform:uppercase}
+.kvalue{font-size:31px;font-weight:800;color:#10213a;margin-top:6px}
+.good{color:#17a05d}.warn{color:#e79a00}.bad{color:#df3e3e}.blue{color:#1677e8}
+.section{font-size:17px;font-weight:800;color:#172b4d;margin:8px 0 12px}
+div[data-testid="stDataFrame"]{background:white;border-radius:12px;border:1px solid #e3e8ef;padding:6px}
+.stButton>button,.stDownloadButton>button{border-radius:9px;font-weight:700}
 </style>
-""", unsafe_allow_html=True)
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+if "path" not in st.session_state:
+    fd,p=tempfile.mkstemp(suffix=".xlsx"); os.close(fd); shutil.copy2(BASE,p); st.session_state.path=p
 
 @st.cache_data(show_spinner=False)
-def get_sheet_names(path):
-    wb = load_workbook(path, read_only=True, data_only=False)
-    names = wb.sheetnames
-    wb.close()
-    return names
+def sheet_names(path):
+    w=load_workbook(path,read_only=True,data_only=False); n=w.sheetnames; w.close(); return n
 
 @st.cache_data(show_spinner=False)
-def read_sheet(path, sheet_name):
-    wb = load_workbook(path, data_only=False, read_only=False)
-    ws = wb[sheet_name]
-    values = []
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
-        values.append([c.value if c.value is not None else "" for c in row])
-    wb.close()
-    columns = [f"Columna {i+1}" for i in range(len(values[0]) if values else 1)]
-    return pd.DataFrame(values, columns=columns)
+def read_raw(path,sheet):
+    w=load_workbook(path,read_only=False,data_only=False); ws=w[sheet]
+    vals=[[c.value for c in row] for row in ws.iter_rows()]
+    w.close()
+    width=max((len(r) for r in vals),default=1)
+    vals=[r+[None]*(width-len(r)) for r in vals]
+    return pd.DataFrame(vals,columns=[f"Columna {i+1}" for i in range(width)])
 
-def update_sheet(base_path, sheet_name, df):
-    wb = load_workbook(base_path)
-    ws = wb[sheet_name]
-    for r in range(df.shape[0]):
-        for c in range(df.shape[1]):
-            value = df.iat[r, c]
-            if pd.isna(value):
-                value = None
-            ws.cell(row=r + 1, column=c + 1).value = value
-    bio = BytesIO()
-    wb.save(bio)
-    wb.close()
-    bio.seek(0)
-    return bio.getvalue()
-
-def detect_percentages(df):
-    vals = []
-    for col in df.columns:
-        for v in df[col]:
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                x = float(v)
-                if 0 <= x <= 1:
-                    vals.append(x * 100)
-            elif isinstance(v, str):
-                m = re.fullmatch(r"\s*(\d+(?:[\.,]\d+)?)\s*%\s*", v)
-                if m:
-                    x = float(m.group(1).replace(",", "."))
-                    if 0 <= x <= 100:
-                        vals.append(x)
+def pct_values(df):
+    vals=[]
+    for v in df.to_numpy().flatten():
+        if isinstance(v,(int,float)) and not isinstance(v,bool):
+            x=float(v)
+            if 0<=x<=1: vals.append(x*100)
+        elif isinstance(v,str):
+            m=re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*%\s*",v)
+            if m:
+                x=float(m.group(1).replace(",","."))
+                if 0<=x<=100: vals.append(x)
     return vals
 
-def phase_progress(path, sheet_name):
-    try:
-        vals = detect_percentages(read_sheet(path, sheet_name))
-        if not vals:
-            return None
-        return float(pd.Series(vals).median())
-    except Exception:
-        return None
+def phase_metric(path,name):
+    vals=pct_values(read_raw(path,name))
+    return round(float(pd.Series(vals).median()),1) if vals else None
 
-if "workbook_path" not in st.session_state:
-    fd, tmp = tempfile.mkstemp(suffix=".xlsx")
-    os.close(fd)
-    shutil.copy2(DEFAULT_FILE, tmp)
-    st.session_state.workbook_path = tmp
+def save_sheet(path,sheet,df):
+    w=load_workbook(path)
+    ws=w[sheet]
+    for r in range(df.shape[0]):
+        for c in range(df.shape[1]):
+            v=df.iat[r,c]
+            if pd.isna(v): v=None
+            ws.cell(r+1,c+1).value=v
+    w.save(path); w.close()
+    read_raw.clear(); sheet_names.clear()
 
-st.title("🏗️ CONTROL DE FASES – SAN FRANCISCO")
-st.caption("Aplicación web para consultar, editar y exportar el control de obra.")
+names=sheet_names(st.session_state.path)
+phases=[n for n in names if n.strip().upper().startswith("FASE")]
+pmetrics={p:phase_metric(st.session_state.path,p) for p in phases[:4]}
+valid=[v for v in pmetrics.values() if v is not None]
+general=round(sum(valid)/len(valid),1) if valid else 0
 
 with st.sidebar:
-    st.header("Archivo")
-    uploaded = st.file_uploader("Cargar Excel", type=["xlsx"])
-    if uploaded is not None:
-        with open(st.session_state.workbook_path, "wb") as f:
-            f.write(uploaded.getbuffer())
-        get_sheet_names.clear(); read_sheet.clear()
-        st.success("Archivo cargado")
+    st.markdown("## 🏢 SAN FRANCISCO")
+    st.caption("CONTROL DE OBRA")
+    st.markdown("---")
+    page=st.radio("NAVEGACIÓN",["📊 Dashboard","🧱 Fases","📈 Avance semanal","⚠️ Ruta crítica","📅 Gantt","🏁 Terminaciones","✏️ Editar planillas","⬆️ Importar / Exportar"],label_visibility="collapsed")
+    st.markdown("---")
+    st.caption("Proyecto San Francisco · Control de fases")
 
-    if st.button("Restablecer original", use_container_width=True):
-        shutil.copy2(DEFAULT_FILE, st.session_state.workbook_path)
-        get_sheet_names.clear(); read_sheet.clear()
-        st.rerun()
+st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO</div>',unsafe_allow_html=True)
+st.markdown(f'<div class="sf-sub">Panel de control de obra · Última sesión: {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',unsafe_allow_html=True)
 
-    st.divider()
-    st.caption("La aplicación trabaja con una copia, por lo que el Excel original incluido no se modifica.")
+if page=="📊 Dashboard":
+    cols=st.columns(5)
+    cards=[
+        ("AVANCE GENERAL",f"{general:.1f}%","blue"),
+        ("FASES",str(len(phases)),"good"),
+        ("HOJAS DE CONTROL",str(len(names)),"warn"),
+        ("RUTA CRÍTICA","Activa","bad"),
+        ("ARCHIVO","En línea","good")
+    ]
+    for c,(lab,val,cl) in zip(cols,cards):
+        c.markdown(f'<div class="card"><div class="klabel">{lab}</div><div class="kvalue {cl}">{val}</div></div>',unsafe_allow_html=True)
 
-sheet_names = get_sheet_names(st.session_state.workbook_path)
+    st.write("")
+    a,b=st.columns([1.25,1])
+    with a:
+        st.markdown('<div class="section">AVANCE POR FASE</div>',unsafe_allow_html=True)
+        chart=pd.DataFrame({"Fase":[p.strip() for p in pmetrics],"Avance":[v or 0 for v in pmetrics.values()]})
+        st.bar_chart(chart.set_index("Fase"),height=310)
+    with b:
+        st.markdown('<div class="section">ESTADO DEL PROYECTO</div>',unsafe_allow_html=True)
+        for p,v in pmetrics.items():
+            st.write(f"**{p.strip()}**")
+            st.progress(min(max((v or 0)/100,0),1),text=f"{(v or 0):.1f}%")
+        st.info("Los porcentajes son indicadores automáticos iniciales detectados desde las hojas de Fase. Podemos vincularlos después a las celdas oficiales exactas de tu planilla.")
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✏️ Editar planillas", "🧱 Seguimiento"])
+    st.markdown('<div class="section">ACCESOS RÁPIDOS</div>',unsafe_allow_html=True)
+    modules=[]
+    for label,key in [("Avance semanal","AVANCE SEMANAL"),("Ruta crítica","CRITICA"),("Gantt","GANTT"),("Terminaciones","TERMIN")]:
+        found=[n for n in names if key in n.upper()]
+        modules.append({"Módulo":label,"Hoja vinculada":", ".join(found) if found else "No encontrada","Estado":"Disponible" if found else "Pendiente"})
+    st.dataframe(pd.DataFrame(modules),use_container_width=True,hide_index=True)
 
-with tab1:
-    st.subheader("Resumen del proyecto")
-    phases = [s for s in sheet_names if s.strip().upper().startswith("FASE")]
-    if phases:
-        cols = st.columns(min(4, len(phases)))
-        results = []
-        for i, phase in enumerate(phases[:4]):
-            p = phase_progress(st.session_state.workbook_path, phase)
-            results.append(p)
-            cols[i].metric(phase.strip(), f"{p:.1f}%" if p is not None else "Sin cálculo")
-        valid = [x for x in results if x is not None]
-        if valid:
-            general = sum(valid) / len(valid)
-            st.progress(max(0.0, min(1.0, general / 100)))
-            st.caption(f"Avance general referencial: {general:.1f}%")
-            st.info("Este cálculo inicial detecta porcentajes presentes en las hojas. Después se puede vincular a las celdas oficiales de avance de tu planilla.")
+elif page=="🧱 Fases":
+    phase=st.selectbox("Selecciona una fase",phases)
+    df=read_raw(st.session_state.path,phase)
+    q=st.text_input("🔎 Buscar en la fase",placeholder="Partida, piso, departamento, responsable...")
+    view=df
+    if q:
+        mask=df.astype(str).apply(lambda x:x.str.contains(q,case=False,na=False)).any(axis=1)
+        view=df.loc[mask]
+    st.dataframe(view,use_container_width=True,height=650)
 
-    modules = {
-        "Avance semanal": [s for s in sheet_names if "AVANCE SEMANAL" in s.upper()],
-        "Ruta crítica": [s for s in sheet_names if "CRITICA" in s.upper()],
-        "Gantt": [s for s in sheet_names if "GANTT" in s.upper()],
-        "Terminaciones": [s for s in sheet_names if "TERMIN" in s.upper()],
-        "Gráficos": [s for s in sheet_names if "GRAF" in s.upper()],
-    }
-    st.dataframe(pd.DataFrame([{"Módulo": k, "Hojas": ", ".join(v) or "—"} for k, v in modules.items()]), use_container_width=True, hide_index=True)
+elif page=="📈 Avance semanal":
+    opts=[n for n in names if "AVANCE SEMANAL" in n.upper()]
+    sh=st.selectbox("Hoja",opts)
+    st.dataframe(read_raw(st.session_state.path,sh),use_container_width=True,height=680)
 
-with tab2:
-    st.subheader("Editor de planillas")
-    selected = st.selectbox("Hoja", sheet_names)
-    df = read_sheet(st.session_state.workbook_path, selected)
-    search = st.text_input("Buscar", placeholder="Ej.: yeso, pintura, departamento…")
-    if search:
-        mask = df.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)
-        st.caption(f"Coincidencias: {int(mask.sum())} filas")
-        st.dataframe(df.loc[mask], use_container_width=True, height=220)
+elif page=="⚠️ Ruta crítica":
+    opts=[n for n in names if "CRITICA" in n.upper()]
+    sh=opts[0] if opts else names[0]
+    st.warning("Seguimiento de Ruta Crítica")
+    st.dataframe(read_raw(st.session_state.path,sh),use_container_width=True,height=680)
 
-    edited = st.data_editor(df, use_container_width=True, num_rows="fixed", height=560, key=f"ed_{selected}")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
-            content = update_sheet(st.session_state.workbook_path, selected, edited)
-            with open(st.session_state.workbook_path, "wb") as f:
-                f.write(content)
-            read_sheet.clear(); get_sheet_names.clear()
-            st.success(f"Cambios guardados en {selected}")
-    with c2:
-        with open(st.session_state.workbook_path, "rb") as f:
-            download = f.read()
-        st.download_button("⬇️ Descargar Excel actualizado", data=download,
-                           file_name="CONTROL_FASES_SAN_FRANCISCO_ACTUALIZADO.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           use_container_width=True)
+elif page=="📅 Gantt":
+    opts=[n for n in names if "GANTT" in n.upper()]
+    sh=opts[0] if opts else names[0]
+    st.dataframe(read_raw(st.session_state.path,sh),use_container_width=True,height=680)
 
-with tab3:
-    st.subheader("Seguimiento de obra")
-    candidates = [s for s in sheet_names if any(k in s.upper() for k in ["FASE", "AVANCE", "CRITICA", "TERMIN", "GANTT"])]
-    selected_module = st.selectbox("Módulo de seguimiento", candidates if candidates else sheet_names)
-    st.dataframe(read_sheet(st.session_state.workbook_path, selected_module), use_container_width=True, height=620)
-    st.caption("Próxima mejora: formulario simplificado por partida, responsable, estado, fechas y porcentaje de avance.")
+elif page=="🏁 Terminaciones":
+    opts=[n for n in names if "TERMIN" in n.upper()]
+    sh=opts[0] if opts else names[0]
+    st.dataframe(read_raw(st.session_state.path,sh),use_container_width=True,height=680)
+
+elif page=="✏️ Editar planillas":
+    st.markdown('<div class="section">EDITOR DE PLANILLAS</div>',unsafe_allow_html=True)
+    sh=st.selectbox("Hoja a editar",names)
+    df=read_raw(st.session_state.path,sh)
+    edited=st.data_editor(df,use_container_width=True,height=650,num_rows="fixed")
+    if st.button("💾 Guardar cambios",type="primary"):
+        save_sheet(st.session_state.path,sh,edited)
+        st.success("Cambios guardados en la copia de trabajo.")
+
+elif page=="⬆️ Importar / Exportar":
+    st.markdown('<div class="section">IMPORTAR / EXPORTAR EXCEL</div>',unsafe_allow_html=True)
+    up=st.file_uploader("Cargar una nueva versión de la planilla",type=["xlsx"])
+    if up is not None:
+        with open(st.session_state.path,"wb") as f: f.write(up.getbuffer())
+        read_raw.clear(); sheet_names.clear()
+        st.success("Planilla cargada.")
+    with open(st.session_state.path,"rb") as f: data=f.read()
+    st.download_button("⬇️ Descargar Excel actualizado",data=data,file_name="CONTROL_FASES_SAN_FRANCISCO_ACTUALIZADO.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if st.button("Restablecer planilla original"):
+        shutil.copy2(BASE,st.session_state.path); read_raw.clear(); sheet_names.clear(); st.rerun()

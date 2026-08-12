@@ -1,6 +1,16 @@
-[app.py](https://github.com/user-attachments/files/30984492/app.py)
-# FASES2.0
-FASES 
-[CONTROL_FASES_SAN_FRANCISCO.xlsx](https://github.com/user-attachments/files/30984494/CONTROL_FASES_SAN_FRANCISCO.xlsx)
-[requirements.txt](https://github.com/user-attachments/files/30984498/requirements.txt)
-[README.md](https://github.com/user-attachments/files/30984497/README.md)
+# CONTROL FASES SAN FRANCISCO — versión profesional
+
+Aplicación Streamlit diseñada a partir de la planilla real del proyecto.
+
+## Publicar en Streamlit
+Sube estos archivos a la raíz de tu repositorio GitHub:
+- app.py
+- requirements.txt
+- CONTROL_FASES_SAN_FRANCISCO.xlsx
+
+En Streamlit Community Cloud usa:
+- Repository: tu repositorio
+- Branch: main
+- Main file path: app.py
+
+Luego presiona Deploy.
