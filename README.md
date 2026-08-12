@@ -24,3 +24,10 @@ No publiques claves reales en GitHub.
 - Muestra KPI de avance, pisos, departamentos y departamentos con avance.
 - Incluye gráficos por piso, torre y partida.
 - Incluye filtros Torre/Piso y detalle por departamento.
+
+
+## v12 - Diagnóstico Supabase
+- Valida formato de URL.
+- Valida que la clave comience con sb_secret_.
+- Realiza una consulta real a phase_updates.
+- Muestra el error exacto dentro de la app si la conexión falla.

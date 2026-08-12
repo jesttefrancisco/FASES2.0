@@ -20,14 +20,29 @@ PHASES = ["FASE1", "FASE2", "FASE3", "FASE4"]
 @st.cache_resource(show_spinner=False)
 def get_supabase():
     try:
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["service_role_key"]
-        return create_client(url, key)
-    except Exception:
+        url = str(st.secrets["supabase"]["url"]).strip()
+        key = str(st.secrets["supabase"]["service_role_key"]).strip()
+
+        if not url.startswith("https://") or not url.endswith(".supabase.co"):
+            raise ValueError("La URL de Supabase no tiene el formato esperado.")
+
+        if not key.startswith("sb_secret_"):
+            raise ValueError("La clave secreta no comienza con sb_secret_.")
+
+        client = create_client(url, key)
+        client.table("phase_updates").select("id").limit(1).execute()
+        return client
+    except Exception as e:
+        st.session_state["supabase_error"] = str(e)
         return None
 
 def db_ready():
     return get_supabase() is not None
+
+def supabase_status():
+    if db_ready():
+        return True, "Conectada"
+    return False, st.session_state.get("supabase_error", "No se pudo inicializar Supabase.")
 
 def db_phase_updates():
     client = get_supabase()
@@ -642,7 +657,12 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"👤 {st.session_state.get('user_name','Usuario')}")
     st.caption(f"Rol: {st.session_state.get('user_role','Usuario')}")
-    st.caption("🟢 Base online conectada" if db_ready() else "🟠 Base online no configurada")
+    ok_db, db_msg = supabase_status()
+    st.caption("🟢 Base online conectada" if ok_db else "🟠 Base online con error")
+    if not ok_db:
+        with st.expander("Ver error de conexión"):
+            st.error(db_msg)
+            st.caption("Revisa App settings → Secrets. La app espera [supabase] url y service_role_key.")
     if st.button("🚪 Cerrar sesión", use_container_width=True):
         st.session_state.authenticated=False
         st.session_state.pop("username",None)
@@ -690,6 +710,20 @@ st.caption("El porcentaje de cada fase se calcula directamente desde las partida
 st.divider()
 
 if page == "📊 Dashboard":
+    ok_db, db_msg = supabase_status()
+    if ok_db:
+        st.success("🟢 Supabase conectado correctamente.")
+    else:
+        st.warning("🟠 Supabase aún no está conectado.")
+        with st.expander("Diagnóstico de conexión"):
+            st.code(db_msg)
+            st.markdown(
+                "Formato esperado en Streamlit Secrets:\n\n"
+                "[supabase]\n"
+                'url = "https://TU-PROYECTO.supabase.co"\n'
+                'service_role_key = "sb_secret_..."'
+            )
+
     st.info("Fuente de los indicadores y gráficos: partidas actuales de «Fases completas». El avance se recalcula automáticamente, sin depender de fórmulas almacenadas en Excel.")
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
