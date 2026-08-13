@@ -490,7 +490,6 @@ def summary_display(path):
     return df
 
 def normalize_route_pct(value):
-    """Normaliza Ruta Crítica: 0-1 -> 0-100; 0-100 se conserva."""
     try:
         if value is None or value == "":
             return 0.0
@@ -499,45 +498,113 @@ def normalize_route_pct(value):
             return x * 100.0
         if 0 <= x <= 100:
             return x
-        return x
-    except:
-        return None
+        return 0.0
+    except Exception:
+        return 0.0
 
 @st.cache_data(show_spinner=False)
 def route_critical_data(path):
     wb = load_workbook(path, read_only=True, data_only=True)
-    ws = wb["SEGUIMIENTO R.CRITICA"]
-    headers = [c.value if c.value is not None else f"Columna {i+1}" for i,c in enumerate(ws[1])]
-    rows=[]
-    for r in range(2, ws.max_row+1):
-        vals=[ws.cell(r,c).value for c in range(1,ws.max_column+1)]
-        if not any(v is not None for v in vals):
-            continue
-        rows.append(vals)
-    wb.close()
-    df=pd.DataFrame(rows,columns=headers)
+    if "SEGUIMIENTO R.CRITICA" not in wb.sheetnames:
+        wb.close()
+        return pd.DataFrame()
 
-    id_cols = ["Columna 1","Piso","Torre","Departamento"]
-    for col in df.columns:
-        if col not in id_cols:
-            df[col]=df[col].map(normalize_route_pct)
+    ws = wb["SEGUIMIENTO R.CRITICA"]
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+
+    if len(rows) <= 1:
+        return pd.DataFrame()
+
+    headers = [
+        v if v is not None else f"Columna {i+1}"
+        for i, v in enumerate(rows[0])
+    ]
+    df = pd.DataFrame(rows[1:], columns=headers)
+
+    if "Piso" in df.columns:
+        df = df[df["Piso"].notna()].copy()
+
+    id_cols = ["Columna 1", "Piso", "Torre", "Departamento"]
+    old_progress = "Av. Depto/Piso"
+    activity_cols = [c for c in df.columns if c not in id_cols and c != old_progress]
+
+    for col in activity_cols:
+        df[col] = df[col].map(normalize_route_pct)
+
+    if activity_cols:
+        df["Avance Ruta Crítica"] = df[activity_cols].mean(axis=1).round(1)
+    else:
+        df["Avance Ruta Crítica"] = 0.0
+
     return df
 
-def route_critical_display(path):
-    df=route_critical_data(path).copy()
-    id_cols=["Columna 1","Piso","Torre","Departamento"]
-    for col in df.columns:
-        if col not in id_cols:
-            df[col]=df[col].map(lambda x: f"{x:.1f}%" if isinstance(x,(int,float)) else "")
+def route_detail_only(path):
+    df = route_critical_data(path).copy()
+    if df.empty:
+        return df
+    if "Departamento" in df.columns:
+        df = df[df["Departamento"].astype(str).str.strip().str.lower() != "todos"].copy()
     return df
 
 def route_overall(path):
-    df=route_critical_data(path)
-    col="Av. Depto/Piso"
-    if col not in df.columns or df.empty:
+    df = route_detail_only(path)
+    if df.empty or "Avance Ruta Crítica" not in df.columns:
         return 0.0
-    vals=pd.to_numeric(df[col],errors="coerce").dropna()
-    return round(float(vals.mean()),1) if len(vals) else 0.0
+    vals = pd.to_numeric(df["Avance Ruta Crítica"], errors="coerce").dropna()
+    return round(float(vals.mean()), 1) if len(vals) else 0.0
+
+def route_by_floor(path):
+    df = route_detail_only(path)
+    if df.empty or "Piso" not in df.columns:
+        return pd.DataFrame()
+    out = df.groupby("Piso", dropna=True)["Avance Ruta Crítica"].mean().reset_index()
+    out = out.rename(columns={"Avance Ruta Crítica": "Avance (%)"})
+    out["Avance (%)"] = out["Avance (%)"].round(1)
+    return out
+
+def route_by_tower(path):
+    df = route_detail_only(path)
+    if df.empty or "Torre" not in df.columns:
+        return pd.DataFrame()
+    out = df.groupby("Torre", dropna=True)["Avance Ruta Crítica"].mean().reset_index()
+    out = out.rename(columns={"Avance Ruta Crítica": "Avance (%)"})
+    out["Avance (%)"] = out["Avance (%)"].round(1)
+    return out
+
+def route_by_activity(path):
+    df = route_detail_only(path)
+    if df.empty:
+        return pd.DataFrame()
+    skip = {"Columna 1","Piso","Torre","Departamento","Av. Depto/Piso","Avance Ruta Crítica"}
+    rows = []
+    for col in df.columns:
+        if col in skip:
+            continue
+        vals = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(vals):
+            rows.append({"Partida": col, "Avance (%)": round(float(vals.mean()), 1)})
+    return pd.DataFrame(rows).sort_values("Avance (%)", ascending=False)
+
+def route_display(path, torre="Todas", piso="Todos"):
+    df = route_detail_only(path).copy()
+    if df.empty:
+        return df
+    if torre != "Todas" and "Torre" in df.columns:
+        df = df[df["Torre"].astype(str) == str(torre)]
+    if piso != "Todos" and "Piso" in df.columns:
+        df = df[df["Piso"] == piso]
+
+    drop_cols = [c for c in ["Columna 1", "Av. Depto/Piso"] if c in df.columns]
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+
+    id_cols = ["Piso","Torre","Departamento"]
+    for col in df.columns:
+        if col not in id_cols:
+            vals = pd.to_numeric(df[col], errors="coerce")
+            df[col] = vals.map(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+    return df
 
 def ensure_history_sheet(path):
     wb = load_workbook(path)
@@ -1025,56 +1092,64 @@ elif page == "📅 Avance semanal":
     st.dataframe(raw_sheet_df(st.session_state.workbook_path,sh),use_container_width=True,height=700)
 
 elif page == "⚠️ Ruta crítica":
-    st.markdown('<div class="section">RUTA CRÍTICA · AVANCE</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">RUTA CRÍTICA · AVANCE REAL</div>', unsafe_allow_html=True)
 
-    rdf = route_critical_data(st.session_state.workbook_path)
-    rdisplay = route_critical_display(st.session_state.workbook_path)
+    rdf = route_detail_only(st.session_state.workbook_path)
     roverall = route_overall(st.session_state.workbook_path)
 
-    c1,c2,c3 = st.columns(3)
-    c1.metric("AVANCE PROMEDIO RUTA CRÍTICA", f"{roverall:.1f}%")
-
-    if "Piso" in rdf.columns and "Av. Depto/Piso" in rdf.columns:
-        piso_avg = (
-            rdf.groupby("Piso", dropna=True)["Av. Depto/Piso"]
-            .mean()
-            .reset_index()
-        )
-        c2.metric("PISOS CON REGISTRO", str(piso_avg["Piso"].nunique()))
+    if rdf.empty:
+        st.error("No se encontraron datos utilizables en SEGUIMIENTO R.CRITICA.")
     else:
-        piso_avg = pd.DataFrame()
+        floors = rdf["Piso"].nunique() if "Piso" in rdf.columns else 0
+        deps = rdf["Departamento"].nunique() if "Departamento" in rdf.columns else 0
+        active = int((rdf["Avance Ruta Crítica"] > 0).sum())
 
-    if "Departamento" in rdf.columns:
-        dep_mask = rdf["Departamento"].astype(str).str.lower() != "todos"
-        c3.metric("DEPARTAMENTOS CONTROLADOS", str(int(dep_mask.sum())))
+        k1,k2,k3,k4 = st.columns(4)
+        k1.metric("AVANCE RUTA CRÍTICA", f"{roverall:.1f}%")
+        k2.metric("PISOS CONTROLADOS", str(floors))
+        k3.metric("DEPARTAMENTOS", str(deps))
+        k4.metric("DEP. CON AVANCE", str(active))
 
-    st.progress(min(max(roverall/100,0),1))
-    st.success(
-        "Ruta Crítica está leyendo y mostrando los avances. "
-        "Los valores en escala decimal (por ejemplo 0,30) se convierten automáticamente a 30%."
-    )
+        st.progress(min(max(roverall/100,0),1))
+        st.success("Ruta Crítica se calcula directamente desde las partidas de SEGUIMIENTO R.CRITICA.")
 
-    left,right = st.columns(2)
-    with left:
-        st.markdown("### Avance de Ruta Crítica por piso")
-        if not piso_avg.empty:
-            piso_avg["Av. Depto/Piso"] = piso_avg["Av. Depto/Piso"].round(1)
-            st.bar_chart(piso_avg.set_index("Piso"), height=340)
+        left,right = st.columns(2)
+        with left:
+            st.markdown("### Avance por piso")
+            pf = route_by_floor(st.session_state.workbook_path)
+            if not pf.empty:
+                st.bar_chart(pf.set_index("Piso"), height=360)
 
-    with right:
-        st.markdown("### Avance por torre")
-        if "Torre" in rdf.columns and "Av. Depto/Piso" in rdf.columns:
-            tower = (
-                rdf.groupby("Torre", dropna=True)["Av. Depto/Piso"]
-                .mean()
-                .reset_index()
-            )
-            tower["Av. Depto/Piso"] = tower["Av. Depto/Piso"].round(1)
-            st.bar_chart(tower.set_index("Torre"), height=340)
+        with right:
+            st.markdown("### Avance por torre")
+            tw = route_by_tower(st.session_state.workbook_path)
+            if not tw.empty:
+                st.bar_chart(tw.set_index("Torre"), height=360)
 
-    st.markdown("### Detalle de Ruta Crítica")
-    st.caption("Todas las partidas se muestran como porcentaje 0%–100%.")
-    st.dataframe(rdisplay, use_container_width=True, height=650)
+        st.markdown("### Avance promedio por partida crítica")
+        act = route_by_activity(st.session_state.workbook_path)
+        if not act.empty:
+            st.bar_chart(act.set_index("Partida"), height=460)
+
+        st.markdown("### Detalle por departamento")
+        f1,f2 = st.columns(2)
+
+        with f1:
+            torre_options = ["Todas"] + sorted([str(x) for x in rdf["Torre"].dropna().unique()]) if "Torre" in rdf.columns else ["Todas"]
+            torre_filter = st.selectbox("Torre", torre_options, key="ruta_torre")
+
+        with f2:
+            base_floor = rdf.copy()
+            if torre_filter != "Todas" and "Torre" in base_floor.columns:
+                base_floor = base_floor[base_floor["Torre"].astype(str) == torre_filter]
+            piso_options = ["Todos"]
+            if "Piso" in base_floor.columns:
+                vals = list(base_floor["Piso"].dropna().unique())
+                piso_options += sorted(vals, key=lambda x: float(x) if str(x).replace(".","",1).isdigit() else str(x))
+            piso_filter = st.selectbox("Piso", piso_options, key="ruta_piso")
+
+        display = route_display(st.session_state.workbook_path, torre_filter, piso_filter)
+        st.dataframe(display, use_container_width=True, height=650)
 
 elif page == "⬆️ Importar / Exportar":
     st.info(

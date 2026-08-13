@@ -31,3 +31,7 @@ No publiques claves reales en GitHub.
 - Valida que la clave comience con sb_secret_.
 - Realiza una consulta real a phase_updates.
 - Muestra el error exacto dentro de la app si la conexión falla.
+
+
+## v13
+Ruta Crítica corregida sobre la versión con Supabase funcionando.
