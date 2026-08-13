@@ -55,3 +55,13 @@ Se corrige el cálculo general para coincidir con la hoja RESUMEN:
 - Avance General = promedio de las cuatro fases oficiales.
 
 La comparación semanal de los viernes guarda estos mismos porcentajes oficiales.
+
+
+## v16 - Porcentajes exactos de la planilla
+- Fase 1 se muestra como 13%.
+- Fase 2 se muestra como 4%.
+- Fase 3 se muestra como 2%.
+- Fase 4 se muestra como 0%.
+- El Avance General se recalcula desde esos cuatro valores oficiales.
+- Resultado general esperado: 4,8%.
+- La comparación semanal guarda estos mismos valores oficiales.

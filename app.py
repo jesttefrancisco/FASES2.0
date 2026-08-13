@@ -371,10 +371,9 @@ def phase_summary(path, phase):
             sum(floor_results) / len(official_floors)
         )
 
-    return round(
-        sum(activity_results) / len(activity_results),
-        1
-    ) if activity_results else 0.0
+    return float(round(
+        sum(activity_results) / len(activity_results)
+    )) if activity_results else 0.0
 
 def phase_by_floor(path, phase):
     df = phase_numeric_percent_df(path, phase)
@@ -795,7 +794,7 @@ st.markdown(
 )
 
 summaries = {p:phase_summary(st.session_state.workbook_path,p) for p in PHASES}
-general = round(sum(summaries.values())/4,1)
+general = round(sum(summaries.values()) / 4, 1)
 
 # AVANCE GENERAL SIEMPRE VISIBLE EN TODAS LAS PÁGINAS
 st.markdown('<div class="section">AVANCE GENERAL DEL PROYECTO</div>', unsafe_allow_html=True)
@@ -819,7 +818,7 @@ for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
         )
         st.progress(min(max(val/100,0),1))
 
-st.caption("El porcentaje oficial de cada fase replica el criterio de la hoja RESUMEN: promedio por partida y piso, considerando los pisos 1 a 9 con igual ponderación.")
+st.caption("Los avances oficiales se calculan con el criterio de la hoja RESUMEN y se redondean a porcentaje entero, igual que en la planilla: Fase 1, Fase 2, Fase 3 y Fase 4.")
 st.divider()
 
 if page == "📊 Dashboard":
@@ -841,10 +840,10 @@ if page == "📊 Dashboard":
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),
-        (c2,"FASE 1",f"{summaries['FASE1']:.1f}%","good"),
-        (c3,"FASE 2",f"{summaries['FASE2']:.1f}%","warn"),
-        (c4,"FASE 3",f"{summaries['FASE3']:.1f}%","warn"),
-        (c5,"FASE 4",f"{summaries['FASE4']:.1f}%","bad"),
+        (c2,"FASE 1",f"{summaries['FASE1']:.0f}%","good"),
+        (c3,"FASE 2",f"{summaries['FASE2']:.0f}%","warn"),
+        (c4,"FASE 3",f"{summaries['FASE3']:.0f}%","warn"),
+        (c5,"FASE 4",f"{summaries['FASE4']:.0f}%","bad"),
     ]
     for c,lab,val,cl in cards:
         c.markdown(f'<div class="card"><div class="klabel">{lab}</div><div class="kvalue {cl}">{val}</div></div>',unsafe_allow_html=True)
@@ -948,10 +947,10 @@ elif page == "📆 Comparación semanal":
         st.markdown("### Último viernes registrado")
         k1,k2,k3,k4,k5 = st.columns(5)
         k1.metric("Avance General", f"{latest['Avance General']:.1f}%")
-        k2.metric("Fase 1", f"{latest['Fase 1']:.1f}%")
-        k3.metric("Fase 2", f"{latest['Fase 2']:.1f}%")
-        k4.metric("Fase 3", f"{latest['Fase 3']:.1f}%")
-        k5.metric("Fase 4", f"{latest['Fase 4']:.1f}%")
+        k2.metric("Fase 1", f"{latest['Fase 1']:.0f}%")
+        k3.metric("Fase 2", f"{latest['Fase 2']:.0f}%")
+        k4.metric("Fase 3", f"{latest['Fase 3']:.0f}%")
+        k5.metric("Fase 4", f"{latest['Fase 4']:.0f}%")
 
         chart_df = hist[["Fecha actualización"] + metric_cols].copy()
         chart_df["Viernes"] = chart_df["Fecha actualización"].dt.strftime("%d-%m-%Y")
@@ -1028,7 +1027,7 @@ elif page == "📈 Gráficos por fase":
 
     for phase in PHASES:
         st.markdown(f"## {phase.replace('FASE','Fase ')}")
-        st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.1f}%")
+        st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.0f}%")
         st.progress(min(max(summaries[phase]/100,0),1))
         a,b=st.columns(2)
 
