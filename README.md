@@ -65,3 +65,34 @@ La comparación semanal de los viernes guarda estos mismos porcentajes oficiales
 - El Avance General se recalcula desde esos cuatro valores oficiales.
 - Resultado general esperado: 4,8%.
 - La comparación semanal guarda estos mismos valores oficiales.
+
+
+## v17 - Eliminación de filas A-B / Todos
+Se retiraron de FASE1, FASE2, FASE3 y FASE4 todas las filas resumen donde:
+- Torre = A-B
+- Departamento = Todos
+
+Porcentajes recalculados desde los registros individuales:
+- Fase 1: 13%
+- Fase 2: 4%
+- Fase 3: 2%
+- Fase 4: 0%
+- Avance General: 4,8%
+
+
+## v18 - Perfiles por fase
+- Administrador: acceso total.
+- Editor FASE1: solo Fase 1.
+- Editor FASE2: solo Fase 2.
+- Editor FASE3: solo Fase 3.
+- Editor FASE4: solo Fase 4.
+- Visor: todas las fases, solo lectura.
+
+Las claves se cambian cuando quieras en Streamlit → Manage app → Secrets.
+
+
+## v19 - Gráficos uniformes y menú claro
+- Todos los gráficos principales usan una altura uniforme de 400 px.
+- Se evita el crecimiento/zoom visual al cambiar entre pestañas.
+- Menú lateral actualizado a un azul más claro.
+- Se mantienen perfiles de acceso, Supabase, comparación semanal, ruta crítica y porcentajes.

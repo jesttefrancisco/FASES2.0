@@ -13,6 +13,46 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
+
+# v19 · Estilo visual uniforme
+st.markdown("""
+<style>
+/* Menú lateral azul más claro */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div:first-child {
+    background: #6F91B3 !important;
+}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span {
+    color: #FFFFFF !important;
+}
+
+/* Elemento seleccionado del menú: contraste suave */
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
+    background: rgba(255,255,255,0.16) !important;
+    border-radius: 8px !important;
+}
+
+/* Tamaño visual uniforme para gráficos */
+[data-testid="stVegaLiteChart"],
+[data-testid="stPlotlyChart"],
+[data-testid="stPyplot"] {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+/* Área de trabajo estable */
+.block-container {
+    max-width: 1450px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 BASE = os.path.join(os.path.dirname(__file__), "CONTROL_FASES_SFCO211.xlsx")
 LOGO = os.path.join(os.path.dirname(__file__), "logo_san_francisco.png")
 PHASES = ["FASE1", "FASE2", "FASE3", "FASE4"]
@@ -196,6 +236,7 @@ def login_screen():
             st.session_state.username = username
             st.session_state.user_name = users[username].get("name", username)
             st.session_state.user_role = users[username].get("role", "Usuario")
+            st.session_state.user_phase = users[username].get("phase", "ALL")
             st.rerun()
         else:
             st.error("Usuario o clave incorrectos.")
@@ -745,16 +786,43 @@ def raw_sheet_df(path, sheet_name):
     data=[r+[None]*(width-len(r)) for r in data]
     return pd.DataFrame(data, columns=[f"Columna {i+1}" for i in range(width)])
 
+
+def current_role():
+    return st.session_state.get("user_role", "Usuario")
+
+def current_phase():
+    return str(st.session_state.get("user_phase", "ALL")).upper()
+
+def allowed_phases():
+    role = current_role()
+    phase = current_phase()
+    if role in ["Administrador", "Visor"]:
+        return PHASES
+    if role == "Editor" and phase in PHASES:
+        return [phase]
+    return []
+
+def can_edit_phase(phase):
+    return current_role() == "Administrador" or (
+        current_role() == "Editor" and current_phase() == phase
+    )
+
+def can_access_admin_tools():
+    return current_role() == "Administrador"
+
 with st.sidebar:
     if os.path.exists(LOGO):
         st.image(LOGO, use_container_width=True)
+
     st.markdown("## CONTROL DE OBRA")
     st.caption("EDIFICIO SAN FRANCISCO 211 · PAZ")
     st.markdown("---")
 
-    page = st.radio(
-        "Menú",
-        [
+    role = current_role()
+    assigned_phase = current_phase()
+
+    if role == "Administrador":
+        menu_options = [
             "📊 Dashboard",
             "📆 Comparación semanal",
             "📈 Gráficos por fase",
@@ -762,24 +830,39 @@ with st.sidebar:
             "🏢 Fases completas",
             "⚠️ Ruta crítica",
             "⬆️ Importar / Exportar",
-        ],
-        label_visibility="collapsed",
-    )
+        ]
+    elif role == "Editor":
+        menu_options = [
+            "📊 Dashboard",
+            "📈 Gráficos por fase",
+            "🧱 Actualizar avances",
+            "🏢 Fases completas",
+        ]
+    elif role == "Visor":
+        menu_options = [
+            "📊 Dashboard",
+            "📆 Comparación semanal",
+            "📈 Gráficos por fase",
+            "🏢 Fases completas",
+            "⚠️ Ruta crítica",
+        ]
+    else:
+        menu_options = ["📊 Dashboard"]
+
+    page = st.radio("Menú", menu_options, label_visibility="collapsed")
 
     st.markdown("---")
     st.caption(f"👤 {st.session_state.get('user_name','Usuario')}")
-    st.caption(f"Rol: {st.session_state.get('user_role','Usuario')}")
+    st.caption(f"Rol: {role}")
+    st.caption("Acceso: Todas las fases" if assigned_phase == "ALL"
+               else f"Acceso: {assigned_phase.replace('FASE','Fase ')}")
+
     ok_db, db_msg = supabase_status()
     st.caption("🟢 Base online conectada" if ok_db else "🟠 Base online con error")
-    if not ok_db:
-        with st.expander("Ver error de conexión"):
-            st.error(db_msg)
-            st.caption("Revisa App settings → Secrets. La app espera [supabase] url y service_role_key.")
+
     if st.button("🚪 Cerrar sesión", use_container_width=True):
-        st.session_state.authenticated=False
-        st.session_state.pop("username",None)
-        st.session_state.pop("user_name",None)
-        st.session_state.pop("user_role",None)
+        for k in ["authenticated","username","user_name","user_role","user_phase"]:
+            st.session_state.pop(k, None)
         st.rerun()
 
 hlogo, htitle = st.columns([1.1,4.9], vertical_alignment="center")
@@ -868,7 +951,7 @@ if page == "📊 Dashboard":
             st.progress(min(max(v/100,0),1))
 
     st.markdown('<div class="section">AVANCE POR PISO · DESDE FASES COMPLETAS</div>',unsafe_allow_html=True)
-    selected_phase=st.selectbox("Fase para detalle",PHASES,format_func=lambda x:x.replace("FASE","Fase "))
+    selected_phase=st.selectbox("Fase para detalle",allowed_phases(),format_func=lambda x:x.replace("FASE","Fase "))
     piso=phase_by_floor(st.session_state.workbook_path,selected_phase)
     if not piso.empty:
         st.bar_chart(piso.set_index("Piso"),height=330)
@@ -897,7 +980,7 @@ elif page == "📆 Comparación semanal":
             st.info("📅 " + next_friday_text())
 
     with top2:
-        if st.button(
+        if current_role() == "Administrador" and st.button(
             "📌 REGISTRAR AVANCE DE HOY",
             type="primary",
             use_container_width=True
@@ -957,7 +1040,7 @@ elif page == "📆 Comparación semanal":
         chart_df = chart_df.set_index("Viernes")[metric_cols]
 
         st.markdown("### Evolución semanal del proyecto")
-        st.line_chart(chart_df, height=480)
+        st.line_chart(chart_df, height=400)
 
         st.caption(
             "Eje horizontal: fecha de actualización de cada viernes. "
@@ -1025,7 +1108,7 @@ elif page == "📈 Gráficos por fase":
     st.markdown('<div class="section">GRÁFICOS DE CADA FASE · FUENTE: FASES COMPLETAS</div>',unsafe_allow_html=True)
     st.caption("Todos los gráficos se generan directamente desde los datos de «Fases completas» y trabajan en escala 0%–100%.")
 
-    for phase in PHASES:
+    for phase in allowed_phases():
         st.markdown(f"## {phase.replace('FASE','Fase ')}")
         st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.0f}%")
         st.progress(min(max(summaries[phase]/100,0),1))
@@ -1046,14 +1129,17 @@ elif page == "📈 Gráficos por fase":
         st.markdown("**Avance promedio por partida**")
         act=phase_activity_summary(st.session_state.workbook_path,phase)
         if not act.empty:
-            st.bar_chart(act.set_index("Partida"),height=420)
+            st.bar_chart(act.set_index("Partida"),height=400)
         st.divider()
 
 elif page == "🧱 Actualizar avances":
+    if current_role() == "Visor":
+        st.error("Tu perfil es solo de lectura.")
+        st.stop()
     st.markdown('<div class="section">ACTUALIZAR AVANCE DE DEPARTAMENTO</div>',unsafe_allow_html=True)
     st.success("Todos los controles de avance se muestran y editan de 0% a 100%.")
 
-    phase=st.selectbox("Fase",PHASES,format_func=lambda x:x.replace("FASE","Fase "))
+    phase=st.selectbox("Fase",allowed_phases(),format_func=lambda x:x.replace("FASE","Fase "))
     df=load_phase(st.session_state.workbook_path,phase)
 
     towers=sorted([str(x) for x in df["Torre"].dropna().unique()])
@@ -1094,7 +1180,9 @@ elif page == "🧱 Actualizar avances":
     st.markdown(f"### Nuevo avance calculado: **{calculated:.1f}%**")
     st.progress(min(max(calculated/100,0),1))
 
-    if st.button("💾 GUARDAR ACTUALIZACIÓN",type="primary",use_container_width=True):
+    if not can_edit_phase(phase):
+        st.warning("No tienes permiso para modificar esta fase.")
+    elif st.button("💾 GUARDAR ACTUALIZACIÓN",type="primary",use_container_width=True):
         save_department(st.session_state.workbook_path,phase,excel_row,edits)
         st.success(f"Departamento {depto} actualizado correctamente.")
         st.rerun()
@@ -1105,7 +1193,7 @@ elif page == "🏢 Fases completas":
 
     phase = st.selectbox(
         "Selecciona una fase",
-        PHASES,
+        allowed_phases(),
         format_func=lambda x:x.replace("FASE","Fase ")
     )
 
@@ -1146,7 +1234,9 @@ elif page == "🏢 Fases completas":
 
     csave, cinfo = st.columns([1,2])
     with csave:
-        if st.button("💾 GUARDAR CAMBIOS DE LA FASE", type="primary", use_container_width=True):
+        if not can_edit_phase(phase):
+            st.info("Modo solo lectura: no tienes permiso para modificar esta fase.")
+        elif st.button("💾 GUARDAR CAMBIOS DE LA FASE", type="primary", use_container_width=True):
             edited_full = original.copy()
             for c in visible_cols:
                 edited_full[c] = edited[c]
@@ -1206,18 +1296,18 @@ elif page == "⚠️ Ruta crítica":
             st.markdown("### Avance por piso")
             pf = route_by_floor(st.session_state.workbook_path)
             if not pf.empty:
-                st.bar_chart(pf.set_index("Piso"), height=360)
+                st.bar_chart(pf.set_index("Piso"), height=400)
 
         with right:
             st.markdown("### Avance por torre")
             tw = route_by_tower(st.session_state.workbook_path)
             if not tw.empty:
-                st.bar_chart(tw.set_index("Torre"), height=360)
+                st.bar_chart(tw.set_index("Torre"), height=400)
 
         st.markdown("### Avance promedio por partida crítica")
         act = route_by_activity(st.session_state.workbook_path)
         if not act.empty:
-            st.bar_chart(act.set_index("Partida"), height=460)
+            st.bar_chart(act.set_index("Partida"), height=400)
 
         st.markdown("### Detalle por departamento")
         f1,f2 = st.columns(2)
@@ -1240,6 +1330,9 @@ elif page == "⚠️ Ruta crítica":
         st.dataframe(display, use_container_width=True, height=650)
 
 elif page == "⬆️ Importar / Exportar":
+    if not can_access_admin_tools():
+        st.error("Solo el Administrador puede importar o exportar archivos.")
+        st.stop()
     st.info(
         "El Excel descargado incluye también el HISTORIAL_SEMANAL registrado en esta sesión, "
         "para conservar las comparaciones de los viernes."
