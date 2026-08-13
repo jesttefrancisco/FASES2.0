@@ -324,11 +324,57 @@ def phase_numeric_percent_df(path, phase):
     return df
 
 def phase_summary(path, phase):
+    """
+    AVANCE OFICIAL DE FASE.
+    Replica el criterio de la hoja RESUMEN de la planilla:
+    - toma las partidas de Fases completas,
+    - calcula el promedio de cada partida por piso,
+    - considera los pisos 1 a 9 con el mismo peso,
+    - luego obtiene el promedio general de todas las partidas.
+    """
     df = phase_numeric_percent_df(path, phase)
-    col = "% Avance Real Depto"
-    if col not in df.columns or len(df) == 0:
+
+    if df.empty or "Piso" not in df.columns:
         return 0.0
-    return round(float(pd.to_numeric(df[col], errors="coerce").fillna(0).mean()), 1)
+
+    skip = {
+        "Fase", "Piso", "Torre", "Departamento",
+        "% Avance Real Depto", "_excel_row"
+    }
+    activity_cols = [c for c in df.columns if c not in skip]
+
+    if not activity_cols:
+        return 0.0
+
+    # La planilla RESUMEN contempla Piso 1 a Piso 9.
+    official_floors = list(range(1, 10))
+    activity_results = []
+
+    for activity in activity_cols:
+        floor_results = []
+
+        for piso in official_floors:
+            piso_rows = df[pd.to_numeric(df["Piso"], errors="coerce") == piso]
+
+            if piso_rows.empty:
+                floor_avg = 0.0
+            else:
+                vals = pd.to_numeric(
+                    piso_rows[activity],
+                    errors="coerce"
+                ).fillna(0.0)
+                floor_avg = float(vals.mean()) if len(vals) else 0.0
+
+            floor_results.append(floor_avg)
+
+        activity_results.append(
+            sum(floor_results) / len(official_floors)
+        )
+
+    return round(
+        sum(activity_results) / len(activity_results),
+        1
+    ) if activity_results else 0.0
 
 def phase_by_floor(path, phase):
     df = phase_numeric_percent_df(path, phase)
@@ -773,7 +819,7 @@ for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
         )
         st.progress(min(max(val/100,0),1))
 
-st.caption("El porcentaje de cada fase se calcula directamente desde las partidas visibles en «Fases completas», por departamento y luego por fase.")
+st.caption("El porcentaje oficial de cada fase replica el criterio de la hoja RESUMEN: promedio por partida y piso, considerando los pisos 1 a 9 con igual ponderación.")
 st.divider()
 
 if page == "📊 Dashboard":

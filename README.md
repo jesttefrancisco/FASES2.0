@@ -44,3 +44,14 @@ Ruta Crítica corregida sobre la versión con Supabase funcionando.
 - Comparación con viernes anterior en puntos porcentuales.
 - Tabla histórica con fecha, porcentajes y usuario.
 - Usa el historial online de Supabase cuando está conectado.
+
+
+## v15 - Avance oficial de fases
+Se corrige el cálculo general para coincidir con la hoja RESUMEN:
+- Fase 1 ≈ 13.4%
+- Fase 2 ≈ 4.0%
+- Fase 3 ≈ 2.0%
+- Fase 4 = 0.0%
+- Avance General = promedio de las cuatro fases oficiales.
+
+La comparación semanal de los viernes guarda estos mismos porcentajes oficiales.
