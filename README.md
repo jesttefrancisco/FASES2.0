@@ -35,3 +35,12 @@ No publiques claves reales en GitHub.
 
 ## v13
 Ruta Crítica corregida sobre la versión con Supabase funcionando.
+
+
+## v14 - Comparación de avance de los viernes
+- Gráfico de líneas con un punto por cada viernes registrado.
+- Series: Avance General, Fase 1, Fase 2, Fase 3 y Fase 4.
+- Último viernes mostrado como KPI.
+- Comparación con viernes anterior en puntos porcentuales.
+- Tabla histórica con fecha, porcentajes y usuario.
+- Usa el historial online de Supabase cuando está conectado.

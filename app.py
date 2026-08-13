@@ -829,26 +829,31 @@ if page == "📊 Dashboard":
         st.bar_chart(piso.set_index("Piso"),height=330)
 
 elif page == "📆 Comparación semanal":
-    st.markdown('<div class="section">COMPARACIÓN DE AVANCE SEMANAL</div>', unsafe_allow_html=True)
-    st.caption(
-        "Esta sección guarda una fotografía del avance del proyecto cada viernes y "
-        "permite comparar la evolución del Avance General y de las cuatro fases."
+    st.markdown('<div class="section">COMPARACIÓN DE AVANCE · REGISTRO DE LOS VIERNES</div>', unsafe_allow_html=True)
+
+    st.info(
+        "Cada punto del gráfico corresponde al avance registrado en un viernes. "
+        "Se compara el Avance General y las cuatro fases a través del tiempo."
     )
 
     is_friday = datetime.now().weekday() == 4
     role = st.session_state.get("user_role", "Usuario")
-    user = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
+    user = st.session_state.get(
+        "user_name",
+        st.session_state.get("username", "Usuario")
+    )
 
-    cstatus, cbutton = st.columns([2,1])
-    with cstatus:
+    top1, top2 = st.columns([2,1])
+
+    with top1:
         if is_friday:
-            st.success("✅ Hoy es viernes: corresponde registrar la actualización semanal.")
+            st.success("✅ Hoy es viernes: corresponde registrar el avance semanal.")
         else:
             st.info("📅 " + next_friday_text())
 
-    with cbutton:
+    with top2:
         if st.button(
-            "📌 Registrar avance de hoy",
+            "📌 REGISTRAR AVANCE DE HOY",
             type="primary",
             use_container_width=True
         ):
@@ -860,6 +865,7 @@ elif page == "📆 Comparación semanal":
                 force=(role == "Administrador")
             )
             load_weekly_history.clear()
+
             if ok:
                 st.success(msg)
                 st.rerun()
@@ -867,17 +873,33 @@ elif page == "📆 Comparación semanal":
                 st.warning(msg)
 
     if not is_friday and role == "Administrador":
-        st.caption("Como Administrador puedes registrar manualmente una actualización fuera del viernes para pruebas o regularización.")
+        st.caption(
+            "Administrador: puedes registrar manualmente fuera del viernes "
+            "para regularizar o probar el historial."
+        )
 
     hist = load_weekly_history(st.session_state.workbook_path)
 
     if hist.empty:
         st.warning(
-            "Aún no hay semanas registradas. El primer punto aparecerá cuando registres "
-            "una actualización semanal."
+            "Todavía no existen viernes registrados. "
+            "Presiona «Registrar avance de hoy» para crear el primer punto del historial."
         )
     else:
+        hist = hist.copy()
+        hist["Fecha actualización"] = pd.to_datetime(
+            hist["Fecha actualización"],
+            errors="coerce"
+        )
+        hist = hist.dropna(subset=["Fecha actualización"]).sort_values("Fecha actualización")
+
+        metric_cols = ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]
+        for c in metric_cols:
+            hist[c] = pd.to_numeric(hist[c], errors="coerce")
+
         latest = hist.iloc[-1]
+
+        st.markdown("### Último viernes registrado")
         k1,k2,k3,k4,k5 = st.columns(5)
         k1.metric("Avance General", f"{latest['Avance General']:.1f}%")
         k2.metric("Fase 1", f"{latest['Fase 1']:.1f}%")
@@ -885,52 +907,73 @@ elif page == "📆 Comparación semanal":
         k4.metric("Fase 3", f"{latest['Fase 3']:.1f}%")
         k5.metric("Fase 4", f"{latest['Fase 4']:.1f}%")
 
-        chart_df = hist.copy()
-        chart_df["Semana"] = chart_df["Fecha actualización"].dt.strftime("%d-%m-%Y")
+        chart_df = hist[["Fecha actualización"] + metric_cols].copy()
+        chart_df["Viernes"] = chart_df["Fecha actualización"].dt.strftime("%d-%m-%Y")
+        chart_df = chart_df.set_index("Viernes")[metric_cols]
 
-        st.markdown("### Evolución del avance por semana")
-        st.line_chart(
-            chart_df.set_index("Semana")[
-                ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]
-            ],
-            height=430
+        st.markdown("### Evolución semanal del proyecto")
+        st.line_chart(chart_df, height=480)
+
+        st.caption(
+            "Eje horizontal: fecha de actualización de cada viernes. "
+            "Eje vertical: porcentaje de avance 0%–100%."
         )
 
         if len(hist) >= 2:
-            prev = hist.iloc[-2]
-            st.markdown("### Variación respecto de la semana anterior")
-            variation = pd.DataFrame({
-                "Indicador":["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"],
-                "Semana anterior":[
-                    prev["Avance General"],prev["Fase 1"],prev["Fase 2"],prev["Fase 3"],prev["Fase 4"]
-                ],
-                "Semana actual":[
-                    latest["Avance General"],latest["Fase 1"],latest["Fase 2"],latest["Fase 3"],latest["Fase 4"]
-                ],
+            current = hist.iloc[-1]
+            previous = hist.iloc[-2]
+
+            st.markdown("### Comparación con el viernes anterior")
+
+            comparison = pd.DataFrame({
+                "Indicador": metric_cols,
+                "Viernes anterior": [previous[c] for c in metric_cols],
+                "Último viernes": [current[c] for c in metric_cols],
             })
-            variation["Variación (pp)"] = (
-                variation["Semana actual"] - variation["Semana anterior"]
+            comparison["Variación (pp)"] = (
+                comparison["Último viernes"] -
+                comparison["Viernes anterior"]
             ).round(1)
+
             st.dataframe(
-                variation.style.format({
-                    "Semana anterior":"{:.1f}%",
-                    "Semana actual":"{:.1f}%",
-                    "Variación (pp)":"{:+.1f}"
+                comparison.style.format({
+                    "Viernes anterior": "{:.1f}%",
+                    "Último viernes": "{:.1f}%",
+                    "Variación (pp)": "{:+.1f}",
                 }),
                 use_container_width=True,
                 hide_index=True
             )
 
-        st.markdown("### Historial de actualizaciones")
+        st.markdown("### Historial de viernes registrados")
+
         shown = hist.copy()
         shown["Fecha actualización"] = shown["Fecha actualización"].dt.strftime("%d-%m-%Y")
-        for c in ["Avance General","Fase 1","Fase 2","Fase 3","Fase 4"]:
-            shown[c] = shown[c].map(lambda x: f"{x:.1f}%")
-        st.dataframe(shown, use_container_width=True, hide_index=True)
 
-        st.caption(
-            "Los puntos del gráfico corresponden a las fotografías de avance guardadas "
-            "en la hoja HISTORIAL_SEMANAL del archivo de trabajo."
+        for c in metric_cols:
+            shown[c] = shown[c].map(
+                lambda x: f"{x:.1f}%" if pd.notna(x) else ""
+            )
+
+        visible_cols = [
+            "Fecha actualización",
+            "Avance General",
+            "Fase 1",
+            "Fase 2",
+            "Fase 3",
+            "Fase 4",
+            "Usuario"
+        ]
+        visible_cols = [c for c in visible_cols if c in shown.columns]
+
+        st.dataframe(
+            shown[visible_cols],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.success(
+            f"Historial disponible: {len(hist)} actualización(es) registrada(s)."
         )
 
 elif page == "📈 Gráficos por fase":
