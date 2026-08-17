@@ -96,3 +96,11 @@ Las claves se cambian cuando quieras en Streamlit → Manage app → Secrets.
 - Se evita el crecimiento/zoom visual al cambiar entre pestañas.
 - Menú lateral actualizado a un azul más claro.
 - Se mantienen perfiles de acceso, Supabase, comparación semanal, ruta crítica y porcentajes.
+
+
+## v20 - Exportación conservando formato original
+Al exportar:
+- se usa el mismo CONTROL_FASES_SFCO211.xlsx como plantilla;
+- se conservan hojas, formato, colores, tamaños y fórmulas;
+- se incorporan los avances actuales almacenados en Supabase;
+- Excel queda configurado para recalcular fórmulas al abrir.

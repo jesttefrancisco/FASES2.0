@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 import os, tempfile, shutil
 from datetime import datetime
+from io import BytesIO
 from supabase import create_client
 
 st.set_page_config(
@@ -542,6 +543,72 @@ def save_full_phase(path, phase, edited_df, original_df):
     load_phase.clear()
     get_sheet_names.clear()
     return changed_cells, len(changed_rows)
+
+
+def build_formatted_export():
+    """
+    Genera una copia del mismo libro Excel de trabajo, conservando:
+    - hojas
+    - formatos
+    - colores
+    - anchos/altos
+    - fórmulas
+    - gráficos/objetos compatibles del XLSX
+
+    Antes de descargar, aplica al libro los avances compartidos guardados
+    actualmente en Supabase.
+    """
+    source_path = st.session_state.get("workbook_path", BASE)
+
+    # Abrimos directamente el mismo XLSX de trabajo; no creamos una planilla nueva.
+    wb = load_workbook(source_path)
+
+    # Aplicar las modificaciones online de Supabase sobre las mismas celdas del Excel.
+    updates = db_phase_updates()
+    changed_rows = {}
+
+    for upd in updates:
+        try:
+            phase = str(upd.get("phase", "")).upper()
+            if phase not in PHASES or phase not in wb.sheetnames:
+                continue
+
+            excel_row = int(upd.get("excel_row"))
+            activity = str(upd.get("activity"))
+            percent = float(upd.get("percent"))
+
+            ws = wb[phase]
+            headers = [c.value for c in ws[1]]
+            header_to_col = {
+                str(h): i + 1
+                for i, h in enumerate(headers)
+                if h is not None
+            }
+
+            excel_col = header_to_col.get(activity)
+            if not excel_col:
+                continue
+
+            # Solo cambiamos el valor de la celda; su formato original se conserva.
+            ws.cell(excel_row, excel_col).value = from_percent(percent, phase)
+            changed_rows.setdefault(phase, set()).add(excel_row)
+
+        except Exception:
+            continue
+
+    # Pedir a Excel que recalcule las fórmulas al abrir el archivo.
+    try:
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+        wb.calculation.calcMode = "auto"
+    except Exception:
+        pass
+
+    output = BytesIO()
+    wb.save(output)
+    wb.close()
+    output.seek(0)
+    return output.getvalue()
 
 def summary_display(path):
     wb = load_workbook(path, read_only=True, data_only=False)
@@ -1346,12 +1413,17 @@ elif page == "⬆️ Importar / Exportar":
         st.success("Archivo cargado.")
         st.rerun()
 
-    with open(st.session_state.workbook_path,"rb") as f:
-        data=f.read()
+    st.markdown("### Exportar Excel")
+    st.caption(
+        "La descarga conserva el mismo formato y estructura de "
+        "CONTROL_FASES_SFCO211.xlsx y aplica los avances actuales guardados en Supabase."
+    )
+
+    export_data = build_formatted_export()
 
     st.download_button(
-        "⬇️ Descargar Excel actualizado",
-        data=data,
+        "⬇️ Descargar CONTROL_FASES_SFCO211 actualizado",
+        data=export_data,
         file_name="CONTROL_FASES_SFCO211_ACTUALIZADO.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
