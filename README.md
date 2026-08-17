@@ -104,3 +104,20 @@ Al exportar:
 - se conservan hojas, formato, colores, tamaños y fórmulas;
 - se incorporan los avances actuales almacenados en Supabase;
 - Excel queda configurado para recalcular fórmulas al abrir.
+
+
+## v21 - Excel depurado y Avance Semanal vinculado
+Se eliminaron las pestañas:
+- IMPRIMIR
+- Hoja2
+- PROJECT TA Y TB KARINA
+- EXEL KARINA
+- PROJECT OBRA TA Y TB
+- GRAFICOS TA Y TB
+- PROG TERMINACIONES
+
+Además:
+- FASE1–FASE4 se muestran uniformemente como porcentajes al descargar.
+- RESUMEN se muestra uniformemente como porcentaje.
+- AVANCE SEMANAL 1 toma el avance de cada partida desde la Fase correspondiente y por Piso.
+- Las partidas antiguas sin equivalente actual quedan en blanco en vez de mostrar errores.
