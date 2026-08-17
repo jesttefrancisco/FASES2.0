@@ -2,7 +2,8 @@
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
-import os, tempfile, shutil
+import os, tempfile, shutil, zipfile, re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from io import BytesIO
 from supabase import create_client
@@ -193,11 +194,20 @@ div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
 </style>
 """, unsafe_allow_html=True)
 
+APP_VERSION = "v22"
+
+# Al cambiar de versión, reemplazar cualquier copia temporal antigua por
+# la plantilla depurada incluida en esta versión. Los avances reales se
+# vuelven a aplicar desde Supabase.
 if "workbook_path" not in st.session_state:
     fd, p = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)
     shutil.copy2(BASE, p)
     st.session_state.workbook_path = p
+    st.session_state.app_version = APP_VERSION
+elif st.session_state.get("app_version") != APP_VERSION:
+    shutil.copy2(BASE, st.session_state.workbook_path)
+    st.session_state.app_version = APP_VERSION
 
 def get_users():
     """
@@ -545,70 +555,203 @@ def save_full_phase(path, phase, edited_df, original_df):
     return changed_cells, len(changed_rows)
 
 
+def _xlsx_col_number(cell_ref):
+    letters = "".join(ch for ch in str(cell_ref) if ch.isalpha())
+    n = 0
+    for ch in letters.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+def _xlsx_col_letter(n):
+    out = ""
+    while n:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
 def build_formatted_export():
     """
-    Genera una copia del mismo libro Excel de trabajo, conservando:
-    - hojas
-    - formatos
-    - colores
-    - anchos/altos
-    - fórmulas
-    - gráficos/objetos compatibles del XLSX
-
-    Antes de descargar, aplica al libro los avances compartidos guardados
-    actualmente en Supabase.
+    Exporta directamente desde la plantilla XLSX depurada de la aplicación.
+    No reabre ni vuelve a guardar el libro con openpyxl: modifica únicamente
+    los valores numéricos de las partidas dentro del paquete XLSX.
+    Esto conserva el formato y evita que Excel tenga que reparar el archivo.
     """
-    source_path = st.session_state.get("workbook_path", BASE)
+    with open(BASE, "rb") as f:
+        base_bytes = f.read()
 
-    # Abrimos directamente el mismo XLSX de trabajo; no creamos una planilla nueva.
-    wb = load_workbook(source_path)
-
-    # Aplicar las modificaciones online de Supabase sobre las mismas celdas del Excel.
     updates = db_phase_updates()
-    changed_rows = {}
+    source = BytesIO(base_bytes)
+    output = BytesIO()
 
-    for upd in updates:
-        try:
-            phase = str(upd.get("phase", "")).upper()
-            if phase not in PHASES or phase not in wb.sheetnames:
+    ns_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ns_rel_doc = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ns_pkg_rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+    with zipfile.ZipFile(source, "r") as zin:
+        names = set(zin.namelist())
+
+        # Shared strings para interpretar los encabezados de FASE1–FASE4.
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            ss_root = ET.fromstring(zin.read("xl/sharedStrings.xml"))
+            for si in ss_root.findall(f"{{{ns_main}}}si"):
+                shared.append("".join(t.text or "" for t in si.iter(f"{{{ns_main}}}t")))
+
+        workbook_root = ET.fromstring(zin.read("xl/workbook.xml"))
+        rel_root = ET.fromstring(zin.read("xl/_rels/workbook.xml.rels"))
+
+        rel_targets = {}
+        for rel in rel_root:
+            rel_targets[rel.attrib.get("Id")] = rel.attrib.get("Target", "")
+
+        sheet_paths = {}
+        sheets_node = workbook_root.find(f"{{{ns_main}}}sheets")
+        if sheets_node is not None:
+            for sh in sheets_node:
+                name = sh.attrib.get("name")
+                rid = sh.attrib.get(f"{{{ns_rel_doc}}}id")
+                target = rel_targets.get(rid, "")
+                if target.startswith("/"):
+                    path = target.lstrip("/")
+                else:
+                    path = os.path.normpath(os.path.join("xl", target)).replace("\\\\", "/")
+                sheet_paths[name] = path
+
+        # Preparar modificaciones por XML de hoja.
+        per_sheet = {}
+        for upd in updates:
+            try:
+                phase = str(upd.get("phase", "")).upper()
+                if phase not in PHASES or phase not in sheet_paths:
+                    continue
+                per_sheet.setdefault(phase, []).append(upd)
+            except Exception:
                 continue
 
-            excel_row = int(upd.get("excel_row"))
-            activity = str(upd.get("activity"))
-            percent = float(upd.get("percent"))
+        replacements = {}
 
-            ws = wb[phase]
-            headers = [c.value for c in ws[1]]
-            header_to_col = {
-                str(h): i + 1
-                for i, h in enumerate(headers)
-                if h is not None
+        for phase, phase_updates in per_sheet.items():
+            path = sheet_paths[phase]
+            if path not in names:
+                continue
+
+            root = ET.fromstring(zin.read(path))
+            sheet_data = root.find(f"{{{ns_main}}}sheetData")
+            if sheet_data is None:
+                continue
+
+            rows = {
+                int(r.attrib.get("r", "0")): r
+                for r in sheet_data.findall(f"{{{ns_main}}}row")
             }
 
-            excel_col = header_to_col.get(activity)
-            if not excel_col:
-                continue
+            # Leer encabezados desde fila 1.
+            header_to_col = {}
+            header_row = rows.get(1)
+            if header_row is not None:
+                for c in header_row.findall(f"{{{ns_main}}}c"):
+                    ref = c.attrib.get("r", "")
+                    col_num = _xlsx_col_number(ref)
+                    ctype = c.attrib.get("t")
+                    value = ""
+                    if ctype == "inlineStr":
+                        is_node = c.find(f"{{{ns_main}}}is")
+                        if is_node is not None:
+                            value = "".join(t.text or "" for t in is_node.iter(f"{{{ns_main}}}t"))
+                    else:
+                        v = c.find(f"{{{ns_main}}}v")
+                        if v is not None and v.text is not None:
+                            if ctype == "s":
+                                try:
+                                    value = shared[int(v.text)]
+                                except Exception:
+                                    value = ""
+                            else:
+                                value = v.text
+                    if value:
+                        header_to_col[str(value)] = col_num
 
-            # Solo cambiamos el valor de la celda; su formato original se conserva.
-            ws.cell(excel_row, excel_col).value = from_percent(percent, phase)
-            changed_rows.setdefault(phase, set()).add(excel_row)
+            for upd in phase_updates:
+                try:
+                    row_num = int(upd.get("excel_row"))
+                    activity = str(upd.get("activity"))
+                    pct = float(upd.get("percent"))
+                    col_num = header_to_col.get(activity)
+                    if not col_num:
+                        continue
 
-        except Exception:
-            continue
+                    raw_value = from_percent(pct, phase)
+                    row = rows.get(row_num)
+                    if row is None:
+                        continue
 
-    # Pedir a Excel que recalcule las fórmulas al abrir el archivo.
-    try:
-        wb.calculation.fullCalcOnLoad = True
-        wb.calculation.forceFullCalc = True
-        wb.calculation.calcMode = "auto"
-    except Exception:
-        pass
+                    target_ref = f"{_xlsx_col_letter(col_num)}{row_num}"
+                    cells = list(row.findall(f"{{{ns_main}}}c"))
+                    cell = next((c for c in cells if c.attrib.get("r") == target_ref), None)
 
-    output = BytesIO()
-    wb.save(output)
-    wb.close()
+                    if cell is None:
+                        cell = ET.Element(f"{{{ns_main}}}c", {"r": target_ref})
+                        # Copiar estilo de una celda cercana de la misma fila.
+                        nearest = None
+                        nearest_dist = 10**9
+                        for other in cells:
+                            ref = other.attrib.get("r", "")
+                            oc = _xlsx_col_number(ref)
+                            if oc >= 5:
+                                d = abs(oc - col_num)
+                                if d < nearest_dist:
+                                    nearest = other
+                                    nearest_dist = d
+                        if nearest is not None and "s" in nearest.attrib:
+                            cell.set("s", nearest.attrib["s"])
+
+                        inserted = False
+                        for idx, other in enumerate(cells):
+                            if _xlsx_col_number(other.attrib.get("r", "")) > col_num:
+                                row.insert(idx, cell)
+                                inserted = True
+                                break
+                        if not inserted:
+                            row.append(cell)
+
+                    # Convertir a número manteniendo el estilo.
+                    cell.attrib.pop("t", None)
+                    for child in list(cell):
+                        if child.tag in {
+                            f"{{{ns_main}}}f",
+                            f"{{{ns_main}}}v",
+                            f"{{{ns_main}}}is",
+                        }:
+                            cell.remove(child)
+                    v = ET.SubElement(cell, f"{{{ns_main}}}v")
+                    v.text = str(raw_value)
+
+                except Exception:
+                    continue
+
+            replacements[path] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+        # Forzar recálculo de fórmulas al abrir Excel.
+        calc_pr = workbook_root.find(f"{{{ns_main}}}calcPr")
+        if calc_pr is None:
+            calc_pr = ET.SubElement(workbook_root, f"{{{ns_main}}}calcPr")
+        calc_pr.set("calcMode", "auto")
+        calc_pr.set("fullCalcOnLoad", "1")
+        calc_pr.set("forceFullCalc", "1")
+        replacements["xl/workbook.xml"] = ET.tostring(
+            workbook_root, encoding="utf-8", xml_declaration=True
+        )
+
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = replacements.get(item.filename)
+                if data is None:
+                    data = zin.read(item.filename)
+                zout.writestr(item, data)
+
     output.seek(0)
     return output.getvalue()
+
 
 def summary_display(path):
     wb = load_workbook(path, read_only=True, data_only=False)
@@ -1401,8 +1544,8 @@ elif page == "⬆️ Importar / Exportar":
         st.error("Solo el Administrador puede importar o exportar archivos.")
         st.stop()
     st.info(
-        "El Excel descargado incluye también el HISTORIAL_SEMANAL registrado en esta sesión, "
-        "para conservar las comparaciones de los viernes."
+        "La descarga usa siempre la plantilla Excel depurada de esta versión. "
+        "AVANCE SEMANAL 1 queda enlazado a las partidas de FASE1–FASE4."
     )
 
     uploaded=st.file_uploader("Cargar una nueva versión de CONTROL_FASES_SFCO211.xlsx",type=["xlsx"])
@@ -1415,8 +1558,9 @@ elif page == "⬆️ Importar / Exportar":
 
     st.markdown("### Exportar Excel")
     st.caption(
-        "La descarga conserva el mismo formato y estructura de "
-        "CONTROL_FASES_SFCO211.xlsx y aplica los avances actuales guardados en Supabase."
+        "La descarga conserva el formato de CONTROL_FASES_SFCO211.xlsx, "
+        "sin las pestañas eliminadas, y aplica los avances actuales de Supabase "
+        "sin reconstruir el libro."
     )
 
     export_data = build_formatted_export()

@@ -121,3 +121,11 @@ Además:
 - RESUMEN se muestra uniformemente como porcentaje.
 - AVANCE SEMANAL 1 toma el avance de cada partida desde la Fase correspondiente y por Piso.
 - Las partidas antiguas sin equivalente actual quedan en blanco en vez de mostrar errores.
+
+
+## v22 - Exportación estable
+- Fuerza una plantilla depurada al cambiar de versión.
+- Solo conserva: AVANCE SEMANAL 1, RESUMEN, FASE1, FASE2, FASE3, FASE4 y SEGUIMIENTO R.CRITICA.
+- Elimina componentes de tablas dinámicas que ya no tienen hojas asociadas.
+- Exporta aplicando Supabase directamente dentro del paquete XLSX, sin regrabar todo el libro.
+- Evita el mensaje de Microsoft Excel indicando que encontró contenido con problemas.
