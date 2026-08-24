@@ -142,3 +142,10 @@ Además:
 - La pantalla Comparación semanal conserva un bloque separado de avance actual en vivo.
 - Ruta crítica muestra todas las partidas de cada fase, sin selección parcial: FASE1=20, FASE2=15, FASE3=21, FASE4=12.
 - El detalle por partida sigue leyendo los cambios de la base online/Supabase.
+
+## v30 - Porcentajes y atraso dinámico
+- Comparación semanal formateada explícitamente como porcentaje.
+- Variación mostrada en puntos porcentuales (pp).
+- Carta Gantt incorpora Fecha de revisión.
+- Días de atraso = días calendario posteriores al término planificado cuando el progreso es menor a 100%.
+- Estado de plazo: Completado / En plazo / No iniciado / Atrasado.

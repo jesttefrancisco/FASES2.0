@@ -627,23 +627,53 @@ GANTT_PLAN = {
     "FASE4": [("Piso 1","2026-12-02",30),("Piso 2","2027-01-02",31),("Piso 3","2027-02-01",30),("Piso 4","2027-03-04",31),("Piso 5","2027-04-04",31),("Piso 6","2027-05-02",28),("Piso 7","2027-06-02",31),("Piso 8","2027-07-02",30),("Piso 9","2027-08-02",31)],
 }
 
-def build_gantt_df(path, phases):
+def build_gantt_df(path, phases, review_date=None):
+    """Construye Gantt y calcula atraso dinámico según la fecha de revisión.
+
+    Regla de atraso:
+    - 100% completado: 0 días de atraso.
+    - Actividad incompleta antes o en su término planificado: 0 días.
+    - Actividad incompleta después del término planificado: días calendario transcurridos.
+    """
+    if review_date is None:
+        try:
+            from zoneinfo import ZoneInfo
+            review_date = pd.Timestamp.now(tz=ZoneInfo("America/Santiago")).tz_localize(None).normalize()
+        except Exception:
+            review_date = pd.Timestamp.today().normalize()
+    else:
+        review_date = pd.Timestamp(review_date).normalize()
+
     rows=[]
     for ph in phases:
         pf = phase_by_floor(path, ph)
         floor_progress = {}
         if not pf.empty:
             for _, rr in pf.iterrows():
-                try: floor_progress[int(float(rr["Piso"]))] = float(rr["Avance (%)"])
-                except Exception: pass
+                try:
+                    floor_progress[int(float(rr["Piso"]))] = float(rr["Avance (%)"])
+                except Exception:
+                    pass
         for floor_name, start_txt, days in GANTT_PLAN[ph]:
             piso_num = int(floor_name.split()[-1])
             start = pd.to_datetime(start_txt)
+            finish = start + pd.Timedelta(days=int(days))
+            progress = round(floor_progress.get(piso_num,0.0),1)
+            delay_days = 0 if progress >= 100 else max(0, int((review_date - finish.normalize()).days))
+            if progress >= 100:
+                schedule_status = "Completado"
+            elif delay_days > 0:
+                schedule_status = "Atrasado"
+            elif review_date < start.normalize():
+                schedule_status = "No iniciado"
+            else:
+                schedule_status = "En plazo"
             rows.append({
                 "Fase": ph.replace("FASE","Fase "), "Piso": floor_name,
                 "Tarea": f'{ph.replace("FASE","Fase ")} · {floor_name}',
-                "Inicio": start, "Término": start + pd.Timedelta(days=int(days)),
-                "Días": int(days), "Progreso (%)": round(floor_progress.get(piso_num,0.0),1)
+                "Inicio": start, "Término": finish,
+                "Días": int(days), "Progreso (%)": progress,
+                "Días atraso": delay_days, "Estado plazo": schedule_status
             })
     return pd.DataFrame(rows)
 
@@ -1526,8 +1556,14 @@ elif page == "📆 Comparación semanal":
                 comparison["Viernes anterior"]
             ).round(1)
 
-            comp_styler = style_percent_df(comparison, ["Viernes anterior","Último viernes"])
-            comp_styler = comp_styler.format({"Variación (pp)":"{:+.1f}"})
+            # Formato explícito en porcentaje para evitar que Streamlit muestre decimales crudos.
+            comp_styler = comparison.style
+            comp_styler = comp_styler.map(_pct_style, subset=["Viernes anterior","Último viernes"])
+            comp_styler = comp_styler.format({
+                "Viernes anterior": "{:.1f}%",
+                "Último viernes": "{:.1f}%",
+                "Variación (pp)": "{:+.1f} pp",
+            }, na_rep="")
             st.dataframe(comp_styler, use_container_width=True, hide_index=True)
 
         st.markdown("### Historial de viernes registrados")
@@ -1738,27 +1774,49 @@ elif page == "📅 Carta Gantt":
     st.markdown('<div class="section">CARTA GANTT · PROGRAMA OFICIAL SAN FRANCISCO 211</div>', unsafe_allow_html=True)
     st.caption("Fechas verificadas contra Libro2.xlsx: inicio del proyecto 01-06-2026. El progreso se actualiza desde la base online.")
 
-    phase_filter = st.selectbox(
-        "Mostrar", ["Todas las fases"] + [p.replace("FASE","Fase ") for p in allowed_phases()],
-        key="gantt_phase_filter"
-    )
+    cg1, cg2 = st.columns([2,1])
+    with cg1:
+        phase_filter = st.selectbox(
+            "Mostrar", ["Todas las fases"] + [p.replace("FASE","Fase ") for p in allowed_phases()],
+            key="gantt_phase_filter"
+        )
+    with cg2:
+        try:
+            from zoneinfo import ZoneInfo
+            _today_cl = pd.Timestamp.now(tz=ZoneInfo("America/Santiago")).date()
+        except Exception:
+            _today_cl = pd.Timestamp.today().date()
+        review_date = st.date_input("Fecha de revisión", value=_today_cl, key="gantt_review_date")
+
     selected = allowed_phases() if phase_filter == "Todas las fases" else [phase_filter.upper().replace("FASE ","FASE")]
-    gdf = build_gantt_df(st.session_state.workbook_path, selected)
+    gdf = build_gantt_df(st.session_state.workbook_path, selected, review_date=review_date)
 
     if gdf.empty:
         st.warning("No hay datos disponibles para construir la Carta Gantt.")
     else:
         fig = px.timeline(
             gdf, x_start="Inicio", x_end="Término", y="Tarea", color="Fase", text="Progreso (%)",
-            hover_data={"Piso":True,"Días":True,"Progreso (%)":':.1f',"Inicio":'|%d-%m-%Y',"Término":'|%d-%m-%Y'}
+            hover_data={
+                "Piso":True,"Días":True,"Progreso (%)":':.1f',"Días atraso":True,"Estado plazo":True,
+                "Inicio":'|%d-%m-%Y',"Término":'|%d-%m-%Y'
+            }
         )
         fig.update_traces(texttemplate="%{text:.1f}%", textposition="inside")
         fig.update_yaxes(autorange="reversed", title=None)
         fig.update_xaxes(title="Programación oficial", tickformat="%d-%m-%Y")
+        # Línea roja = fecha desde la cual se calculan los días de atraso.
+        fig.add_vline(x=pd.Timestamp(review_date).timestamp()*1000, line_dash="dash", line_color="red")
         fig.update_layout(height=max(520,30*len(gdf)+170), legend_title_text="Fase", margin=dict(l=10,r=10,t=30,b=10))
         st.plotly_chart(fig, use_container_width=True)
 
-        detail = gdf[["Fase","Piso","Inicio","Término","Días","Progreso (%)"]].copy()
+        delayed = int((gdf["Días atraso"] > 0).sum())
+        max_delay = int(gdf["Días atraso"].max()) if not gdf.empty else 0
+        a1,a2,a3 = st.columns(3)
+        a1.metric("Fecha de revisión", pd.Timestamp(review_date).strftime("%d-%m-%Y"))
+        a2.metric("Actividades atrasadas", delayed)
+        a3.metric("Mayor atraso", f"{max_delay} días")
+
+        detail = gdf[["Fase","Piso","Inicio","Término","Días","Progreso (%)","Días atraso","Estado plazo"]].copy()
         detail["Inicio"] = detail["Inicio"].dt.strftime("%d-%m-%Y")
         detail["Término"] = detail["Término"].dt.strftime("%d-%m-%Y")
         st.dataframe(style_percent_df(detail, ["Progreso (%)"]), use_container_width=True, hide_index=True, height=420)
@@ -1807,9 +1865,17 @@ elif page == "⚠️ Ruta crítica":
         st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo. La Ruta Crítica muestra únicamente las partidas definidas en la imagen de referencia y se actualiza desde FASE1–FASE4.")
 
         st.markdown("### Carta Gantt vinculada a la Ruta Crítica")
-        gdf = build_gantt_df(st.session_state.workbook_path, selected_phases)
+        try:
+            from zoneinfo import ZoneInfo
+            route_review_date = pd.Timestamp.now(tz=ZoneInfo("America/Santiago")).date()
+        except Exception:
+            route_review_date = pd.Timestamp.today().date()
+        gdf = build_gantt_df(st.session_state.workbook_path, selected_phases, review_date=route_review_date)
         if not gdf.empty:
-            fig = px.timeline(gdf, x_start="Inicio", x_end="Término", y="Tarea", color="Fase", text="Progreso (%)")
+            fig = px.timeline(
+                gdf, x_start="Inicio", x_end="Término", y="Tarea", color="Fase", text="Progreso (%)",
+                hover_data={"Días atraso":True,"Estado plazo":True}
+            )
             fig.update_traces(texttemplate="%{text:.0f}%", textposition="inside")
             fig.update_yaxes(autorange="reversed", title=None)
             fig.update_xaxes(title="Fechas oficiales (Libro2.xlsx)", tickformat="%d-%m-%Y")
