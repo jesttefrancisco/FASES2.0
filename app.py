@@ -1,6 +1,7 @@
 
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from openpyxl import load_workbook
 import os, tempfile, shutil, zipfile, re
 import xml.etree.ElementTree as ET
@@ -1036,6 +1037,7 @@ with st.sidebar:
             "📊 Dashboard",
             "📆 Comparación semanal",
             "📈 Gráficos por fase",
+            "📅 Carta Gantt",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
             "⚠️ Ruta crítica",
@@ -1045,6 +1047,7 @@ with st.sidebar:
         menu_options = [
             "📊 Dashboard",
             "📈 Gráficos por fase",
+            "📅 Carta Gantt",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
         ]
@@ -1053,6 +1056,7 @@ with st.sidebar:
             "📊 Dashboard",
             "📆 Comparación semanal",
             "📈 Gráficos por fase",
+            "📅 Carta Gantt",
             "🏢 Fases completas",
             "⚠️ Ruta crítica",
         ]
@@ -1478,6 +1482,80 @@ elif page == "📅 Avance semanal":
     opts=[n for n in names if "AVANCE SEMANAL" in n.upper()]
     sh=opts[0] if opts else names[0]
     st.dataframe(raw_sheet_df(st.session_state.workbook_path,sh),use_container_width=True,height=700)
+
+elif page == "📅 Carta Gantt":
+    st.markdown('<div class="section">CARTA GANTT · SAN FRANCISCO 211</div>', unsafe_allow_html=True)
+    st.caption(
+        "El progreso se calcula en línea desde las partidas actuales de FASE1–FASE4. "
+        "Cada piso usa su promedio real y cada fase usa el mismo criterio oficial del Dashboard."
+    )
+
+    gantt_plan = {
+        "FASE1": [("Piso 1","2026-06-01",30),("Piso 2","2026-07-01",30),("Piso 3","2026-08-01",31),("Piso 4","2026-09-01",31),("Piso 5","2026-10-01",30),("Piso 6","2026-11-01",31),("Piso 7","2026-12-01",30),("Piso 8","2027-01-01",31),("Piso 9","2027-02-01",31)],
+        "FASE2": [("Piso 1","2026-10-02",39),("Piso 2","2026-11-02",31),("Piso 3","2026-12-02",30),("Piso 4","2027-01-02",31),("Piso 5","2027-02-01",30),("Piso 6","2027-03-04",31),("Piso 7","2027-04-04",31),("Piso 8","2027-05-02",28),("Piso 9","2027-06-02",31)],
+        "FASE3": [("Piso 1","2026-11-02",31),("Piso 2","2026-12-02",30),("Piso 3","2027-01-02",31),("Piso 4","2027-02-01",30),("Piso 5","2027-03-04",31),("Piso 6","2027-04-04",31),("Piso 7","2027-05-02",28),("Piso 8","2027-06-02",31),("Piso 9","2027-07-02",30)],
+        "FASE4": [("Piso 1","2026-12-02",30),("Piso 2","2027-01-02",31),("Piso 3","2027-02-01",30),("Piso 4","2027-03-04",31),("Piso 5","2027-04-04",31),("Piso 6","2027-05-02",28),("Piso 7","2027-06-02",31),("Piso 8","2027-07-02",30),("Piso 9","2027-08-02",31)],
+    }
+
+    phase_filter = st.selectbox(
+        "Mostrar",
+        ["Todas las fases"] + [p.replace("FASE", "Fase ") for p in allowed_phases()],
+        key="gantt_phase_filter"
+    )
+    selected = allowed_phases() if phase_filter == "Todas las fases" else [phase_filter.upper().replace("FASE ", "FASE")]
+
+    metrics = st.columns(len(selected))
+    for col, ph in zip(metrics, selected):
+        col.metric(ph.replace("FASE","Fase "), f"{phase_summary(st.session_state.workbook_path, ph):.0f}%")
+
+    rows = []
+    for ph in selected:
+        pf = phase_by_floor(st.session_state.workbook_path, ph)
+        floor_progress = {}
+        if not pf.empty:
+            for _, rr in pf.iterrows():
+                try:
+                    floor_progress[int(float(rr["Piso"]))] = float(rr["Avance (%)"])
+                except Exception:
+                    pass
+        for floor_name, start_txt, days in gantt_plan[ph]:
+            piso_num = int(floor_name.split()[-1])
+            start = pd.to_datetime(start_txt)
+            finish = start + pd.Timedelta(days=int(days))
+            rows.append({
+                "Fase": ph.replace("FASE","Fase "),
+                "Piso": floor_name,
+                "Tarea": f'{ph.replace("FASE","Fase ")} · {floor_name}',
+                "Inicio": start,
+                "Término": finish,
+                "Días": int(days),
+                "Progreso (%)": round(floor_progress.get(piso_num, 0.0), 1),
+            })
+
+    gdf = pd.DataFrame(rows)
+    if gdf.empty:
+        st.warning("No hay datos disponibles para construir la Carta Gantt.")
+    else:
+        fig = px.timeline(
+            gdf,
+            x_start="Inicio",
+            x_end="Término",
+            y="Tarea",
+            color="Fase",
+            text="Progreso (%)",
+            hover_data={"Piso":True,"Días":True,"Progreso (%)":':.1f',"Inicio":'|%d-%m-%Y',"Término":'|%d-%m-%Y'},
+        )
+        fig.update_traces(texttemplate="%{text:.1f}%", textposition="inside")
+        fig.update_yaxes(autorange="reversed", title=None)
+        fig.update_xaxes(title="Programación", tickformat="%b %Y")
+        fig.update_layout(height=max(520, 30 * len(gdf) + 180), legend_title_text="Fase", margin=dict(l=10,r=10,t=30,b=10))
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### Detalle de programación y avance")
+        detail = gdf[["Fase","Piso","Inicio","Término","Días","Progreso (%)"]].copy()
+        detail["Inicio"] = detail["Inicio"].dt.strftime("%d-%m-%Y")
+        detail["Término"] = detail["Término"].dt.strftime("%d-%m-%Y")
+        st.dataframe(detail, use_container_width=True, hide_index=True, height=420)
 
 elif page == "⚠️ Ruta crítica":
     st.markdown('<div class="section">RUTA CRÍTICA · AVANCE REAL</div>', unsafe_allow_html=True)
