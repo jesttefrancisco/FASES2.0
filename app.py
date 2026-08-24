@@ -495,8 +495,8 @@ def save_department(path, phase, excel_row, activity_values):
     recalc_department_progress(ws, excel_row, phase)
     wb.save(path)
     wb.close()
-    load_phase.clear()
-    get_sheet_names.clear()
+    # Forzar refresco inmediato de todas las vistas que dependen del avance.
+    st.cache_data.clear()
 
 def save_full_phase(path, phase, edited_df, original_df):
     """
@@ -551,8 +551,8 @@ def save_full_phase(path, phase, edited_df, original_df):
 
     wb.save(path)
     wb.close()
-    load_phase.clear()
-    get_sheet_names.clear()
+    # Forzar refresco inmediato de Dashboard, gráficos, Gantt y editores.
+    st.cache_data.clear()
     return changed_cells, len(changed_rows)
 
 
@@ -1220,6 +1220,16 @@ elif page == "📆 Comparación semanal":
             "para regularizar o probar el historial."
         )
 
+    # Mostrar siempre el avance ACTUAL EN VIVO, aunque el historial semanal no se haya registrado todavía.
+    st.markdown("### Avance actual en vivo")
+    a1,a2,a3,a4,a5 = st.columns(5)
+    a1.metric("Avance General", f"{general:.1f}%")
+    a2.metric("Fase 1", f"{summaries['FASE1']:.0f}%")
+    a3.metric("Fase 2", f"{summaries['FASE2']:.0f}%")
+    a4.metric("Fase 3", f"{summaries['FASE3']:.0f}%")
+    a5.metric("Fase 4", f"{summaries['FASE4']:.0f}%")
+    st.caption("Estos valores cambian inmediatamente al guardar avances. El bloque siguiente corresponde al historial registrado de los viernes.")
+
     hist = load_weekly_history(st.session_state.workbook_path)
 
     if hist.empty:
@@ -1241,7 +1251,7 @@ elif page == "📆 Comparación semanal":
 
         latest = hist.iloc[-1]
 
-        st.markdown("### Último viernes registrado")
+        st.markdown("### Último viernes registrado · histórico")
         k1,k2,k3,k4,k5 = st.columns(5)
         k1.metric("Avance General", f"{latest['Avance General']:.1f}%")
         k2.metric("Fase 1", f"{latest['Fase 1']:.0f}%")
@@ -1398,7 +1408,7 @@ elif page == "🧱 Actualizar avances":
         st.warning("No tienes permiso para modificar esta fase.")
     elif st.button("💾 GUARDAR ACTUALIZACIÓN",type="primary",use_container_width=True):
         save_department(st.session_state.workbook_path,phase,excel_row,edits)
-        st.success(f"Departamento {depto} actualizado correctamente.")
+        st.success(f"Departamento {depto} actualizado correctamente. Dashboard, gráficos y Gantt se refrescarán con este nuevo avance.")
         st.rerun()
 
 elif page == "🏢 Fases completas":
@@ -1463,7 +1473,7 @@ elif page == "🏢 Fases completas":
             )
             st.success(
                 f"Guardado correctamente: {changed_cells} celdas modificadas "
-                f"en {changed_rows} departamentos. Los gráficos usarán estos mismos datos."
+                f"en {changed_rows} departamentos. Dashboard, gráficos y Gantt usarán estos mismos datos inmediatamente."
             )
             st.rerun()
 
@@ -1634,19 +1644,46 @@ elif page == "⬆️ Importar / Exportar":
         st.success("Archivo cargado.")
         st.rerun()
 
-    st.markdown("### Exportar Excel")
+    st.markdown("### Respaldo de base online")
+    online_updates = db_phase_updates()
+    if online_updates:
+        backup_df = pd.DataFrame(online_updates)
+        preferred = [c for c in ["phase","excel_row","activity","percent","updated_by","updated_at","id"] if c in backup_df.columns]
+        other = [c for c in backup_df.columns if c not in preferred]
+        backup_df = backup_df[preferred + other].sort_values(
+            [c for c in ["updated_at","phase","excel_row"] if c in backup_df.columns],
+            ascending=True
+        )
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Cambios guardados online", f"{len(backup_df):,}".replace(",","."))
+        c2.metric("Departamentos con cambios", backup_df[[c for c in ["phase","excel_row"] if c in backup_df.columns]].drop_duplicates().shape[0])
+        latest = str(backup_df["updated_at"].max()) if "updated_at" in backup_df.columns else "—"
+        c3.metric("Última actualización", latest[:19].replace("T"," "))
+        st.success("La base online tiene detalle de avances. Descarga este respaldo antes de importar o reemplazar cualquier Excel.")
+        st.download_button(
+            "🛟 DESCARGAR RESPALDO BASE ONLINE (CSV)",
+            data=backup_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"RESPALDO_BASE_ONLINE_SFCO211_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        with st.expander("Ver últimos cambios guardados online"):
+            st.dataframe(backup_df.tail(100), use_container_width=True, height=420)
+    else:
+        st.warning("No se encontraron cambios detallados en phase_updates. No importes otro Excel hasta revisar la conexión de Supabase.")
+
+    st.markdown("### Exportar Excel recuperado")
     st.caption(
-        "La descarga conserva el formato de CONTROL_FASES_SFCO211.xlsx, "
-        "sin las pestañas eliminadas, y aplica los avances actuales de Supabase "
-        "sin reconstruir el libro."
+        "Esta descarga parte de la plantilla oficial y aplica TODOS los cambios detallados que actualmente existen en Supabase. "
+        "Úsala como respaldo recuperado del estado online."
     )
 
     export_data = build_formatted_export()
 
     st.download_button(
-        "⬇️ Descargar CONTROL_FASES_SFCO211 actualizado",
+        "⬇️ Descargar Excel RECUPERADO desde base online",
         data=export_data,
-        file_name="CONTROL_FASES_SFCO211_ACTUALIZADO.xlsx",
+        file_name="CONTROL_FASES_SFCO211_RECUPERADO_BASE_ONLINE.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
