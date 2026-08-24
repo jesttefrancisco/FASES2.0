@@ -127,6 +127,26 @@ def db_weekly_history():
     except Exception:
         return []
 
+def db_latest_weekly_snapshot():
+    """Devuelve el último corte oficial directamente desde Supabase, sin cache.
+    Esta función es la fuente maestra para Dashboard, Ruta Crítica y Gantt.
+    """
+    client = get_supabase()
+    if client is None:
+        return None
+    try:
+        res = (
+            client.table("weekly_history")
+            .select("*")
+            .order("update_date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
 def db_register_weekly(summaries, general, username):
     client = get_supabase()
     if client is None:
@@ -1184,8 +1204,33 @@ with sync_a:
     else:
         st.caption("🟢 Base online conectada · sin cambios detallados registrados")
 
-summaries = {p:phase_summary(st.session_state.workbook_path,p) for p in PHASES}
-general = round(sum(summaries.values()) / 4, 1)
+# Avance calculado desde el detalle actual (partidas/departamentos).
+live_summaries = {p: phase_summary(st.session_state.workbook_path, p) for p in PHASES}
+live_general = round(sum(live_summaries.values()) / 4, 1)
+
+# AVANCE OFICIAL VISIBLE: lectura DIRECTA del último registro de weekly_history.
+# No usa cache para evitar que un computador muestre un corte anterior.
+summaries = dict(live_summaries)
+general = live_general
+official_snapshot_date = None
+official_snapshot_user = None
+official_snapshot_source = "avance en vivo"
+_latest_official = db_latest_weekly_snapshot()
+if _latest_official:
+    try:
+        summaries = {
+            "FASE1": float(pd.to_numeric(_latest_official.get("fase1"), errors="coerce") or 0),
+            "FASE2": float(pd.to_numeric(_latest_official.get("fase2"), errors="coerce") or 0),
+            "FASE3": float(pd.to_numeric(_latest_official.get("fase3"), errors="coerce") or 0),
+            "FASE4": float(pd.to_numeric(_latest_official.get("fase4"), errors="coerce") or 0),
+        }
+        general = float(pd.to_numeric(_latest_official.get("general"), errors="coerce") or 0)
+        official_snapshot_date = pd.to_datetime(_latest_official.get("update_date"), errors="coerce")
+        official_snapshot_user = _latest_official.get("updated_by")
+        official_snapshot_source = "weekly_history · Supabase"
+    except Exception:
+        summaries = dict(live_summaries)
+        general = live_general
 
 # AVANCE GENERAL SIEMPRE VISIBLE EN TODAS LAS PÁGINAS
 st.markdown('<div class="section">AVANCE GENERAL DEL PROYECTO</div>', unsafe_allow_html=True)
@@ -1209,7 +1254,16 @@ for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
         )
         st.progress(min(max(val/100,0),1))
 
-st.caption("Los avances oficiales se calculan con el criterio de la hoja RESUMEN y se redondean a porcentaje entero, igual que en la planilla: Fase 1, Fase 2, Fase 3 y Fase 4.")
+if official_snapshot_date is not None and not pd.isna(official_snapshot_date):
+    _who = f" · registrado por {official_snapshot_user}" if official_snapshot_user else ""
+    st.caption(
+        f"✅ Corte oficial usado: {official_snapshot_date.strftime('%d-%m-%Y')} · "
+        f"Fuente: {official_snapshot_source}{_who}. "
+        f"General {general:.1f}% · F1 {summaries['FASE1']:.1f}% · "
+        f"F2 {summaries['FASE2']:.1f}% · F3 {summaries['FASE3']:.1f}% · F4 {summaries['FASE4']:.1f}%."
+    )
+else:
+    st.warning("No se encontró un corte oficial en weekly_history; se muestra temporalmente el avance calculado desde las partidas actuales.")
 st.divider()
 
 if page == "📊 Dashboard":
@@ -1227,7 +1281,15 @@ if page == "📊 Dashboard":
                 'service_role_key = "sb_secret_..."'
             )
 
-    st.info("Fuente de los indicadores y gráficos: partidas actuales de «Fases completas». El avance se recalcula automáticamente, sin depender de fórmulas almacenadas en Excel.")
+    if official_snapshot_date is not None and not pd.isna(official_snapshot_date):
+        st.info(
+            f"📌 Dashboard sincronizado con el último corte oficial de Comparación semanal: "
+            f"{official_snapshot_date.strftime('%d-%m-%Y')} · "
+            f"General {general:.1f}% · Fase 1 {summaries['FASE1']:.1f}% · "
+            f"Fase 2 {summaries['FASE2']:.1f}% · Fase 3 {summaries['FASE3']:.1f}% · Fase 4 {summaries['FASE4']:.1f}%."
+        )
+    else:
+        st.warning("Dashboard sin corte oficial disponible; se está mostrando el avance en vivo.")
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),
@@ -1296,8 +1358,8 @@ elif page == "📆 Comparación semanal":
         ):
             ok, msg = register_weekly_snapshot(
                 st.session_state.workbook_path,
-                summaries,
-                general,
+                live_summaries,
+                live_general,
                 user,
                 force=(role == "Administrador")
             )
@@ -1318,11 +1380,11 @@ elif page == "📆 Comparación semanal":
     # Mostrar siempre el avance ACTUAL EN VIVO, aunque el historial semanal no se haya registrado todavía.
     st.markdown("### Avance actual en vivo")
     a1,a2,a3,a4,a5 = st.columns(5)
-    a1.metric("Avance General", f"{general:.1f}%")
-    a2.metric("Fase 1", f"{summaries['FASE1']:.0f}%")
-    a3.metric("Fase 2", f"{summaries['FASE2']:.0f}%")
-    a4.metric("Fase 3", f"{summaries['FASE3']:.0f}%")
-    a5.metric("Fase 4", f"{summaries['FASE4']:.0f}%")
+    a1.metric("Avance General", f"{live_general:.1f}%")
+    a2.metric("Fase 1", f"{live_summaries['FASE1']:.0f}%")
+    a3.metric("Fase 2", f"{live_summaries['FASE2']:.0f}%")
+    a4.metric("Fase 3", f"{live_summaries['FASE3']:.0f}%")
+    a5.metric("Fase 4", f"{live_summaries['FASE4']:.0f}%")
     st.caption("Estos valores cambian inmediatamente al guardar avances. El bloque siguiente corresponde al historial registrado de los viernes.")
 
     hist = load_weekly_history(st.session_state.workbook_path)
@@ -1629,27 +1691,38 @@ elif page == "⚠️ Ruta crítica":
     )
     selected_phases = allowed_phases() if phase_filter == "Todas las fases" else [phase_filter.upper().replace("FASE ","FASE")]
 
-    mats = [phase_activity_floor_matrix(st.session_state.workbook_path, ph) for ph in selected_phases]
-    matrix = pd.concat([m for m in mats if not m.empty], ignore_index=True) if any(not m.empty for m in mats) else pd.DataFrame()
+    mats = {ph: phase_activity_floor_matrix(st.session_state.workbook_path, ph) for ph in selected_phases}
+    valid_mats = {ph:m for ph,m in mats.items() if not m.empty}
 
-    if matrix.empty:
+    if not valid_mats:
         st.warning("No existen partidas disponibles para construir la Ruta Crítica.")
     else:
-        # KPIs superiores como en la referencia visual.
+        # KPIs oficiales superiores: último corte registrado en Comparación semanal.
         c1,c2,c3,c4,c5 = st.columns(5)
-        c1.metric("AVANCE GENERAL", f"{general:.1f}%")
+        c1.metric("AVANCE GENERAL OFICIAL", f"{general:.1f}%")
         c2.metric("FASE 1", f"{summaries['FASE1']:.0f}%")
         c3.metric("FASE 2", f"{summaries['FASE2']:.0f}%")
         c4.metric("FASE 3", f"{summaries['FASE3']:.0f}%")
         c5.metric("FASE 4", f"{summaries['FASE4']:.0f}%")
+        if official_snapshot_date is not None:
+            st.info(f"Corte oficial mostrado: {official_snapshot_date.strftime('%d-%m-%Y')}. Las partidas se leen del último detalle guardado en la base online.")
 
-        st.markdown("### Ruta crítica actualizada")
+        st.markdown("### Ruta crítica completa · todas las partidas de cada fase")
         pct_cols = [f"Piso {i}" for i in range(1,10)] + ["% Avance Real"]
-        st.dataframe(
-            style_percent_df(matrix, pct_cols),
-            use_container_width=True, hide_index=True, height=760
-        )
-        st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo.")
+        for ph in selected_phases:
+            matrix = valid_mats.get(ph)
+            if matrix is None or matrix.empty:
+                continue
+            phase_label = ph.replace("FASE", "FASE ")
+            st.markdown(f"#### {phase_label} · {len(matrix)} partidas")
+            # Mostrar todas las filas de la fase sin recortar componentes.
+            table_height = max(220, min(900, 38 * (len(matrix) + 1)))
+            st.dataframe(
+                style_percent_df(matrix, pct_cols),
+                use_container_width=True, hide_index=True, height=table_height
+            )
+
+        st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo. Se incluyen todas las columnas de partidas existentes en FASE1–FASE4.")
 
         st.markdown("### Carta Gantt vinculada a la Ruta Crítica")
         gdf = build_gantt_df(st.session_state.workbook_path, selected_phases)

@@ -136,3 +136,9 @@ Además:
 - Carta Gantt con fechas verificadas contra Libro2.xlsx enviado por el usuario.
 - Semáforo de 3 tonos: verde 100%, amarillo 50–99%, naranjo 0–49%.
 - Vista de semáforo adicional para Fases completas sin afectar la edición de datos.
+
+## v27 - Corrección avance oficial y ruta crítica completa
+- Los KPI principales usan el último registro disponible de Comparación semanal como corte oficial.
+- La pantalla Comparación semanal conserva un bloque separado de avance actual en vivo.
+- Ruta crítica muestra todas las partidas de cada fase, sin selección parcial: FASE1=20, FASE2=15, FASE3=21, FASE4=12.
+- El detalle por partida sigue leyendo los cambios de la base online/Supabase.
