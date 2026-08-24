@@ -129,3 +129,10 @@ Además:
 - Elimina componentes de tablas dinámicas que ya no tienen hojas asociadas.
 - Exporta aplicando Supabase directamente dentro del paquete XLSX, sin regrabar todo el libro.
 - Evita el mensaje de Microsoft Excel indicando que encontró contenido con problemas.
+
+## v26 – Sincronización, Ruta Crítica visual y Gantt oficial
+- Sincronización automática de avances desde Supabase entre computadores (TTL corto + botón manual de sincronización).
+- Ruta Crítica en matriz por fase/partida y Piso 1–9, alimentada desde Fases completas.
+- Carta Gantt con fechas verificadas contra Libro2.xlsx enviado por el usuario.
+- Semáforo de 3 tonos: verde 100%, amarillo 50–99%, naranjo 0–49%.
+- Vista de semáforo adicional para Fases completas sin afectar la edición de datos.
