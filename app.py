@@ -515,6 +515,88 @@ def phase_activity_floor_matrix(path, phase):
         rows.append(rec)
     return pd.DataFrame(rows)
 
+
+# Ruta Crítica oficial definida por el usuario (imagen de referencia 24-08-2026).
+# Cada etiqueta visible se enlaza con la columna real de la fase para conservar actualización automática.
+CRITICAL_ROUTE_COMPONENTS = {
+    "FASE1": [
+        ("Trazado tabique/Yeso/auxiliares vent. Y puertas", "Trazado tabique/Yeso/auxiliares vent. Y puertas"),
+        ("Grada Buque (9cm)", "Grada Buque (9cm)"),
+        ("Rasgo ventana - terrazas", "Rasgo ventana - terrazas"),
+        ("Yeso Muro", "Yeso Muro"),
+        ("Yeso Cielo", "Yeso Cielo"),
+        ("Sanitario vertical y ramal", "Sanitario vertical y ramal"),
+        ("Tabique 1° Cara", "Tabique 1° Cara"),
+        ("Tabique 2° cara", "Tabique 2° cara "),
+    ],
+    "FASE2": [
+        ("Huinchas tabiques", "Huinchas tabiques"),
+        ("Instalación Marco Puerta Acceso", "Instalación Marco Puerta Acceso"),
+        ("Marcos Puertas Interiores", "Marcos Puertas Interiores"),
+        ("Impermeabilizacion Baños y cocina", "Impermeabilizacion Baños"),
+        ("Instalación de Receptaculo", "Instalacion de tina/Receptaculo"),
+        ("Protección Tina/receptaculo", "Protección Tina/receptaculo"),
+        ("Instalación Ventana", "Instalación Ventana"),
+        ("Ceramica Pisos", "Ceramica Pisos"),
+        ("Ceramica Muros", "Ceramica Muros"),
+        ("Cerámica de Terrazas", "Cerámica de Terrazas"),
+    ],
+    "FASE3": [
+        ("Instalación piernas de closet", "Instalación piernas de closet"),
+        ("Instalación Cornisas", "Instalación Cornisas"),
+        ("Puertas interiores", "Puertas interiores"),
+        ("Puertas de acceso y pasillo", "Puertas de acceso y pasillo"),
+        ("Cerradura Puertas", "Cerradura Puertas "),
+        ("Cableado Eléctrico y CCDD", "Cableado Eléctrico y CCDD"),
+        ("Empaste Muro Cielo", "Empaste Muro Cielo"),
+        ("Instalación de Baranda de Cristal", "Instalación de Baranda de Crital"),
+        ("Losalin Cielo Departamento", "Losalin Cielo Departamento "),
+        ("Instalacion Muebles de cocina (Base)", "Instalacion de Muebles de cocina (Base)"),
+        ("Instalacion Muebles de cocina (Aereo)", "Instalacion Muebles de cocina (Aereo)"),
+        ("Instalación cubiertas cocina", "Instalación cubiertas cocina"),
+    ],
+    "FASE4": [
+        ("Instalacion de Artefactos Sanitarios.", "Instalacion de Artefactos Sanitarios."),
+        ("Instalación de Shower Door", "Instalación de Shower Door y Barra Cortina"),
+        ("Kit de cocina (Horno-Encimera -Campana - Lavaplato)", "Kit de cocina (Horno-Encimera -Campana - Lavaplato)"),
+        ("Griferia.", "Griferia."),
+        ("Piso Flotante + cubrejunta + junquillo", "Piso Flotante + cubrejunta + junquillo"),
+        ("2da Mano de Pintura", "2° mano de pintura. (puertas, , cielo de baño, )"),
+        ("Instalación de Papel Mural", "Instalación Papel Mural"),
+        ("Topes en piso y Accesorios", "Topes en piso y Accesorios"),
+    ],
+}
+
+def critical_route_matrix(path, phase):
+    """Matriz oficial de Ruta Crítica según selección indicada por el usuario."""
+    df = phase_numeric_percent_df(path, phase)
+    if df.empty:
+        return pd.DataFrame()
+    piso_num = pd.to_numeric(df.get("Piso"), errors="coerce")
+    rows = []
+    for visible_name, source_col in CRITICAL_ROUTE_COMPONENTS.get(phase, []):
+        if source_col not in df.columns:
+            continue
+        rec = {"Fase": phase.replace("FASE", "FASE "), "Partida": visible_name}
+        floor_vals = []
+        for piso in range(1, 10):
+            vals = pd.to_numeric(df.loc[piso_num == piso, source_col], errors="coerce").fillna(0.0)
+            avg = round(float(vals.mean()) if len(vals) else 0.0, 1)
+            rec[f"Piso {piso}"] = avg
+            floor_vals.append(avg)
+        real = round(sum(floor_vals) / 9, 1) if floor_vals else 0.0
+        rec["% Avance Real"] = real
+        if real >= 100:
+            rec["Estado"] = "✅ Completado"
+        elif real >= 50:
+            rec["Estado"] = "🟡 En progreso"
+        elif real > 0:
+            rec["Estado"] = "🟠 En riesgo"
+        else:
+            rec["Estado"] = "⚪ No iniciado"
+        rows.append(rec)
+    return pd.DataFrame(rows)
+
 def _pct_style(v):
     try:
         x = float(v)
@@ -1683,7 +1765,7 @@ elif page == "📅 Carta Gantt":
 
 elif page == "⚠️ Ruta crítica":
     st.markdown('<div class="section">RUTA CRÍTICA DEL PROYECTO · ACTUALIZACIÓN EN LÍNEA</div>', unsafe_allow_html=True)
-    st.caption("Formato basado en la matriz adjunta: partidas por fase, Piso 1 a Piso 9 y avance real. Se recalcula desde Fases completas y Supabase.")
+    st.caption("Ruta Crítica oficial según la imagen adjunta: selección específica de partidas por fase, Piso 1 a Piso 9 y avance real. Se recalcula automáticamente desde Fases completas y Supabase.")
 
     phase_filter = st.selectbox(
         "Fase", ["Todas las fases"] + [p.replace("FASE","Fase ") for p in allowed_phases()],
@@ -1691,7 +1773,7 @@ elif page == "⚠️ Ruta crítica":
     )
     selected_phases = allowed_phases() if phase_filter == "Todas las fases" else [phase_filter.upper().replace("FASE ","FASE")]
 
-    mats = {ph: phase_activity_floor_matrix(st.session_state.workbook_path, ph) for ph in selected_phases}
+    mats = {ph: critical_route_matrix(st.session_state.workbook_path, ph) for ph in selected_phases}
     valid_mats = {ph:m for ph,m in mats.items() if not m.empty}
 
     if not valid_mats:
@@ -1707,14 +1789,14 @@ elif page == "⚠️ Ruta crítica":
         if official_snapshot_date is not None:
             st.info(f"Corte oficial mostrado: {official_snapshot_date.strftime('%d-%m-%Y')}. Las partidas se leen del último detalle guardado en la base online.")
 
-        st.markdown("### Ruta crítica completa · todas las partidas de cada fase")
+        st.markdown("### Ruta crítica oficial · partidas definidas por fase")
         pct_cols = [f"Piso {i}" for i in range(1,10)] + ["% Avance Real"]
         for ph in selected_phases:
             matrix = valid_mats.get(ph)
             if matrix is None or matrix.empty:
                 continue
             phase_label = ph.replace("FASE", "FASE ")
-            st.markdown(f"#### {phase_label} · {len(matrix)} partidas")
+            st.markdown(f"#### {phase_label} · {len(matrix)} partidas críticas")
             # Mostrar todas las filas de la fase sin recortar componentes.
             table_height = max(220, min(900, 38 * (len(matrix) + 1)))
             st.dataframe(
@@ -1722,7 +1804,7 @@ elif page == "⚠️ Ruta crítica":
                 use_container_width=True, hide_index=True, height=table_height
             )
 
-        st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo. Se incluyen todas las columnas de partidas existentes en FASE1–FASE4.")
+        st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo. La Ruta Crítica muestra únicamente las partidas definidas en la imagen de referencia y se actualiza desde FASE1–FASE4.")
 
         st.markdown("### Carta Gantt vinculada a la Ruta Crítica")
         gdf = build_gantt_df(st.session_state.workbook_path, selected_phases)
