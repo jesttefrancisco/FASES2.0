@@ -216,7 +216,7 @@ div[data-testid="stDataFrame"] {font-size:12px;}
 </style>
 """, unsafe_allow_html=True)
 
-APP_VERSION = "v26"
+APP_VERSION = "v31"
 
 # Al cambiar de versión, reemplazar cualquier copia temporal antigua por
 # la plantilla depurada incluida en esta versión. Los avances reales se
@@ -1378,6 +1378,43 @@ else:
     st.warning("No se encontró un corte oficial en weekly_history; se muestra temporalmente el avance calculado desde las partidas actuales.")
 st.divider()
 
+
+
+def _phase_hex(ph):
+    return {"FASE1":"#0B63B6","FASE2":"#11879A","FASE3":"#2E8B2E","FASE4":"#E3A500"}.get(ph,"#64748B")
+
+def _status_label(pct):
+    try: x=float(pct)
+    except Exception: x=0.0
+    if x >= 99.999: return "✅ Al día"
+    if x >= 50: return "⚠️ En progreso"
+    if x > 0: return "⚠️ En riesgo"
+    return "🕘 No iniciado"
+
+def route_activity_summary(path, phases):
+    frames=[]
+    for ph in phases:
+        m=critical_route_matrix(path, ph)
+        if m.empty: continue
+        x=m[["Fase","Partida","% Avance Real"]].copy()
+        x["Estado"] = x["% Avance Real"].map(_status_label)
+        x["Crítica"] = "🔴 Sí"
+        frames.append(x)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+def render_route_activity_html(df):
+    if df.empty:
+        return '<div class="route-empty">Sin datos de ruta crítica.</div>'
+    phase_colors={"FASE 1":"#0B63B6","FASE 2":"#11879A","FASE 3":"#2E8B2E","FASE 4":"#E3A500"}
+    rows=[]; last=None
+    for _,r in df.iterrows():
+        ph=str(r["Fase"]); pct=float(r["% Avance Real"])
+        bar = '#22c55e' if pct >= 99.999 else ('#84cc16' if pct >= 50 else ('#fbbf24' if pct > 0 else '#cbd5e1'))
+        phase_cell = ('<td class="phase-band" style="background:%s">%s</td>' % (phase_colors.get(ph,'#64748B'), ph)) if ph!=last else '<td class="phase-band phase-blank"></td>'
+        last=ph
+        rows.append('<tr>%s<td class="task-name">%s</td><td class="pct-cell"><div class="mini-track"><div class="mini-fill" style="width:%.1f%%;background:%s"></div></div><span>%.0f%%</span></td><td class="state-cell">%s</td><td class="critical-cell">%s</td></tr>' % (phase_cell, str(r["Partida"]), max(0,min(100,pct)), bar, pct, str(r["Estado"]), str(r["Crítica"])))
+    return '<div class="route-table-wrap"><table class="route-table"><thead><tr><th>FASE</th><th>PARTIDA (ACTIVIDAD)</th><th>% AVANCE REAL</th><th>ESTADO</th><th>CRÍTICA</th></tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>'
+
 if page == "📊 Dashboard":
     ok_db, db_msg = supabase_status()
     if ok_db:
@@ -1822,66 +1859,80 @@ elif page == "📅 Carta Gantt":
         st.dataframe(style_percent_df(detail, ["Progreso (%)"]), use_container_width=True, hide_index=True, height=420)
 
 elif page == "⚠️ Ruta crítica":
-    st.markdown('<div class="section">RUTA CRÍTICA DEL PROYECTO · ACTUALIZACIÓN EN LÍNEA</div>', unsafe_allow_html=True)
-    st.caption("Ruta Crítica oficial según la imagen adjunta: selección específica de partidas por fase, Piso 1 a Piso 9 y avance real. Se recalcula automáticamente desde Fases completas y Supabase.")
+    st.markdown("""
+    <style>
+    .route-head{display:flex;align-items:center;justify-content:space-between;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:10px}
+    .route-head-title{font-size:24px;font-weight:900;color:#14263e}.route-head-sub{font-size:12px;color:#667085;margin-top:2px}
+    .route-kpi{background:#fff;border:1px solid #dfe6ef;border-radius:8px;padding:12px 14px;min-height:124px;box-shadow:0 2px 8px rgba(15,35,60,.04)}
+    .route-kpi .t{font-size:12px;font-weight:850;text-transform:uppercase;color:#334155}.route-kpi .v{font-size:30px;font-weight:900;color:#0f172a;margin:8px 0 2px}.route-kpi .s{font-size:11px;color:#64748b}
+    .route-panel{background:#fff;border:1px solid #dfe6ef;border-radius:8px;padding:10px 10px 12px;box-shadow:0 2px 8px rgba(15,35,60,.04)}
+    .route-panel-title{font-size:15px;font-weight:900;color:#d01e1e;margin:0 0 8px 2px}
+    .route-table-wrap{overflow:auto;max-height:690px;border:1px solid #d7dee8}.route-table{width:100%;border-collapse:collapse;font-size:10.5px;background:#fff}.route-table th{position:sticky;top:0;z-index:3;background:#f8fafc;color:#0f172a;border:1px solid #d7dee8;padding:7px 5px;font-size:9.5px}.route-table td{border:1px solid #e2e8f0;padding:5px 5px;vertical-align:middle}.phase-band{color:#fff;font-weight:900;text-align:center;width:54px}.phase-blank{color:transparent}.task-name{min-width:230px}.pct-cell{min-width:145px;white-space:nowrap}.mini-track{display:inline-block;width:82px;height:14px;background:#e5e7eb;border-radius:2px;margin-right:6px;vertical-align:middle;overflow:hidden}.mini-fill{height:100%}.state-cell{white-space:nowrap}.critical-cell{text-align:center;white-space:nowrap}
+    </style>
+    """, unsafe_allow_html=True)
 
-    phase_filter = st.selectbox(
-        "Fase", ["Todas las fases"] + [p.replace("FASE","Fase ") for p in allowed_phases()],
-        key="route_matrix_phase"
-    )
-    selected_phases = allowed_phases() if phase_filter == "Todas las fases" else [phase_filter.upper().replace("FASE ","FASE")]
-
-    mats = {ph: critical_route_matrix(st.session_state.workbook_path, ph) for ph in selected_phases}
-    valid_mats = {ph:m for ph,m in mats.items() if not m.empty}
-
-    if not valid_mats:
-        st.warning("No existen partidas disponibles para construir la Ruta Crítica.")
+    snap = db_latest_weekly_snapshot()
+    if snap:
+        route_general=float(snap.get("general", general) or 0)
+        route_summaries={"FASE1":float(snap.get("fase1", summaries.get("FASE1",0)) or 0),"FASE2":float(snap.get("fase2", summaries.get("FASE2",0)) or 0),"FASE3":float(snap.get("fase3", summaries.get("FASE3",0)) or 0),"FASE4":float(snap.get("fase4", summaries.get("FASE4",0)) or 0)}
+        route_date=pd.to_datetime(snap.get("update_date"), errors="coerce")
     else:
-        # KPIs oficiales superiores: último corte registrado en Comparación semanal.
-        c1,c2,c3,c4,c5 = st.columns(5)
-        c1.metric("AVANCE GENERAL OFICIAL", f"{general:.1f}%")
-        c2.metric("FASE 1", f"{summaries['FASE1']:.0f}%")
-        c3.metric("FASE 2", f"{summaries['FASE2']:.0f}%")
-        c4.metric("FASE 3", f"{summaries['FASE3']:.0f}%")
-        c5.metric("FASE 4", f"{summaries['FASE4']:.0f}%")
-        if official_snapshot_date is not None:
-            st.info(f"Corte oficial mostrado: {official_snapshot_date.strftime('%d-%m-%Y')}. Las partidas se leen del último detalle guardado en la base online.")
+        route_general=general; route_summaries=summaries; route_date=official_snapshot_date
+    date_txt = route_date.strftime('%d-%m-%Y') if route_date is not None and not pd.isna(route_date) else 'Sin corte oficial'
+    st.markdown('<div class="route-head"><div><div class="route-head-title">🔗 RUTA CRÍTICA DEL PROYECTO</div><div class="route-head-sub">La ruta crítica y la Carta Gantt se actualizan con el avance real registrado.</div></div><div style="text-align:right;font-size:12px;color:#475569">📅 Fecha de actualización<br><b style="color:#d01e1e">%s</b></div></div>' % date_txt, unsafe_allow_html=True)
 
-        st.markdown("### Ruta crítica oficial · partidas definidas por fase")
-        pct_cols = [f"Piso {i}" for i in range(1,10)] + ["% Avance Real"]
-        for ph in selected_phases:
-            matrix = valid_mats.get(ph)
-            if matrix is None or matrix.empty:
-                continue
-            phase_label = ph.replace("FASE", "FASE ")
-            st.markdown(f"#### {phase_label} · {len(matrix)} partidas críticas")
-            # Mostrar todas las filas de la fase sin recortar componentes.
-            table_height = max(220, min(900, 38 * (len(matrix) + 1)))
-            st.dataframe(
-                style_percent_df(matrix, pct_cols),
-                use_container_width=True, hide_index=True, height=table_height
-            )
+    kcols=st.columns([1.2,1,1,1,1,2.2])
+    with kcols[0]:
+        st.markdown('<div class="route-kpi"><div class="t">Avance general del proyecto</div><div class="v">%.1f%%</div><div class="s">Última actualización: <b>%s</b></div></div>' % (route_general,date_txt), unsafe_allow_html=True)
+    for i,ph in enumerate(PHASES, start=1):
+        with kcols[i]:
+            color=_phase_hex(ph)
+            st.markdown('<div class="route-kpi" style="border-top:7px solid %s"><div class="t">%s</div><div class="v">%.0f%%</div><div class="s">Avance real</div></div>' % (color,ph.replace('FASE','FASE '),route_summaries.get(ph,0)), unsafe_allow_html=True)
+    with kcols[5]:
+        hist=load_weekly_history(st.session_state.workbook_path)
+        if not hist.empty:
+            plot=hist.tail(8).copy(); cols=[c for c in ['Fase 1','Fase 2','Fase 3','Fase 4'] if c in plot.columns]
+            long=plot.melt(id_vars=['Fecha actualización'], value_vars=cols, var_name='Fase', value_name='Avance')
+            figw=px.line(long,x='Fecha actualización',y='Avance',color='Fase',markers=True)
+            figw.update_layout(height=125,margin=dict(l=0,r=0,t=8,b=0),legend=dict(orientation='h',y=1.2,x=0),font=dict(size=9))
+            figw.update_yaxes(title=None,ticksuffix='%'); figw.update_xaxes(title=None,tickformat='%d-%m')
+            st.plotly_chart(figw,use_container_width=True,config={'displayModeBar':False})
+        else: st.info('Sin historial semanal')
 
-        st.caption("Semáforo: 🟩 100% completado · 🟨 50%–99% en progreso · 🟧 0%–49% pendiente/en riesgo. La Ruta Crítica muestra únicamente las partidas definidas en la imagen de referencia y se actualiza desde FASE1–FASE4.")
-
-        st.markdown("### Carta Gantt vinculada a la Ruta Crítica")
+    left,right=st.columns([0.98,1.32], gap='small')
+    selected_phases=allowed_phases()
+    with left:
+        st.markdown('<div class="route-panel"><div class="route-panel-title">RUTA CRÍTICA ACTUALIZADA</div>',unsafe_allow_html=True)
+        rdf=route_activity_summary(st.session_state.workbook_path, selected_phases)
+        st.markdown(render_route_activity_html(rdf), unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="route-panel"><div class="route-panel-title">CARTA GANTT – PROGRAMA ACTUALIZADO</div>',unsafe_allow_html=True)
         try:
             from zoneinfo import ZoneInfo
-            route_review_date = pd.Timestamp.now(tz=ZoneInfo("America/Santiago")).date()
-        except Exception:
-            route_review_date = pd.Timestamp.today().date()
-        gdf = build_gantt_df(st.session_state.workbook_path, selected_phases, review_date=route_review_date)
+            route_review_date=pd.Timestamp.now(tz=ZoneInfo('America/Santiago')).date()
+        except Exception: route_review_date=pd.Timestamp.today().date()
+        gdf=build_gantt_df(st.session_state.workbook_path, selected_phases, review_date=route_review_date)
         if not gdf.empty:
-            fig = px.timeline(
-                gdf, x_start="Inicio", x_end="Término", y="Tarea", color="Fase", text="Progreso (%)",
-                hover_data={"Días atraso":True,"Estado plazo":True}
-            )
-            fig.update_traces(texttemplate="%{text:.0f}%", textposition="inside")
-            fig.update_yaxes(autorange="reversed", title=None)
-            fig.update_xaxes(title="Fechas oficiales (Libro2.xlsx)", tickformat="%d-%m-%Y")
-            fig.add_vline(x=pd.Timestamp.today().timestamp()*1000, line_dash="dash", line_color="red")
-            fig.update_layout(height=max(500,27*len(gdf)+150), margin=dict(l=10,r=10,t=20,b=10))
-            st.plotly_chart(fig, use_container_width=True)
+            def gantt_state(row):
+                p=float(row['Progreso (%)'])
+                if p>=100: return 'Completado (100%)'
+                if p>0 and row['Días atraso']<=0: return 'En progreso'
+                if row['Días atraso']>0: return 'En riesgo'
+                return 'No iniciado (0%)'
+            gdf['Estado visual']=gdf.apply(gantt_state,axis=1)
+            cmap={'Completado (100%)':'#1f8f3a','En progreso':'#7bc96f','En riesgo':'#f6bf26','No iniciado (0%)':'#c9c9c9'}
+            fig=px.timeline(gdf,x_start='Inicio',x_end='Término',y='Tarea',color='Estado visual',text='Progreso (%)',color_discrete_map=cmap,hover_data={'Piso':True,'Días atraso':True,'Estado plazo':True})
+            fig.update_traces(texttemplate='%{text:.0f}%',textposition='outside')
+            fig.update_yaxes(autorange='reversed',title=None,tickfont=dict(size=9))
+            fig.update_xaxes(title=None,tickformat='%b\n%d',side='top',gridcolor='#e5e7eb')
+            fig.add_vline(x=pd.Timestamp(route_review_date).timestamp()*1000,line_color='#e11d1d',line_dash='dash',line_width=1.5)
+            fig.update_layout(height=700,margin=dict(l=0,r=5,t=40,b=5),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
+            st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
+            delayed=int((gdf['Días atraso']>0).sum()); max_delay=int(gdf['Días atraso'].max()) if len(gdf) else 0
+            m1,m2,m3=st.columns(3); m1.metric('HOY / revisión',pd.Timestamp(route_review_date).strftime('%d-%m-%Y')); m2.metric('Actividades atrasadas',delayed); m3.metric('Mayor atraso',f'{max_delay} días')
+        else: st.warning('Sin datos para la Carta Gantt.')
+        st.markdown('</div>',unsafe_allow_html=True)
 
 elif page == "⬆️ Importar / Exportar":
     if not can_access_admin_tools():
