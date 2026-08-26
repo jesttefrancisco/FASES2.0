@@ -149,3 +149,8 @@ Además:
 - Carta Gantt incorpora Fecha de revisión.
 - Días de atraso = días calendario posteriores al término planificado cuando el progreso es menor a 100%.
 - Estado de plazo: Completado / En plazo / No iniciado / Atrasado.
+
+
+## v32
+- Carta Gantt: Fase 4 / Piso 9 termina el 30-08-2027.
+- Paneles Ruta Crítica y Carta Gantt ampliados para pantallas de escritorio.

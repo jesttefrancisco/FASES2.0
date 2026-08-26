@@ -51,7 +51,9 @@ st.markdown("""
 
 /* Área de trabajo estable */
 .block-container {
-    max-width: 1450px !important;
+    max-width: 1850px !important;
+    padding-left: 1.4rem !important;
+    padding-right: 1.4rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -624,7 +626,7 @@ GANTT_PLAN = {
     "FASE1": [("Piso 1","2026-06-01",30),("Piso 2","2026-07-01",30),("Piso 3","2026-08-01",31),("Piso 4","2026-09-01",31),("Piso 5","2026-10-01",30),("Piso 6","2026-11-01",31),("Piso 7","2026-12-01",30),("Piso 8","2027-01-01",31),("Piso 9","2027-02-01",31)],
     "FASE2": [("Piso 1","2026-10-02",39),("Piso 2","2026-11-02",31),("Piso 3","2026-12-02",30),("Piso 4","2027-01-02",31),("Piso 5","2027-02-01",30),("Piso 6","2027-03-04",31),("Piso 7","2027-04-04",31),("Piso 8","2027-05-02",28),("Piso 9","2027-06-02",31)],
     "FASE3": [("Piso 1","2026-11-02",31),("Piso 2","2026-12-02",30),("Piso 3","2027-01-02",31),("Piso 4","2027-02-01",30),("Piso 5","2027-03-04",31),("Piso 6","2027-04-04",31),("Piso 7","2027-05-02",28),("Piso 8","2027-06-02",31),("Piso 9","2027-07-02",30)],
-    "FASE4": [("Piso 1","2026-12-02",30),("Piso 2","2027-01-02",31),("Piso 3","2027-02-01",30),("Piso 4","2027-03-04",31),("Piso 5","2027-04-04",31),("Piso 6","2027-05-02",28),("Piso 7","2027-06-02",31),("Piso 8","2027-07-02",30),("Piso 9","2027-08-02",31)],
+    "FASE4": [("Piso 1","2026-12-02",30),("Piso 2","2027-01-02",31),("Piso 3","2027-02-01",30),("Piso 4","2027-03-04",31),("Piso 5","2027-04-04",31),("Piso 6","2027-05-02",28),("Piso 7","2027-06-02",31),("Piso 8","2027-07-02",30),("Piso 9","2027-08-02",28)],
 }
 
 def build_gantt_df(path, phases, review_date=None):
@@ -1867,7 +1869,7 @@ elif page == "⚠️ Ruta crítica":
     .route-kpi .t{font-size:12px;font-weight:850;text-transform:uppercase;color:#334155}.route-kpi .v{font-size:30px;font-weight:900;color:#0f172a;margin:8px 0 2px}.route-kpi .s{font-size:11px;color:#64748b}
     .route-panel{background:#fff;border:1px solid #dfe6ef;border-radius:8px;padding:10px 10px 12px;box-shadow:0 2px 8px rgba(15,35,60,.04)}
     .route-panel-title{font-size:15px;font-weight:900;color:#d01e1e;margin:0 0 8px 2px}
-    .route-table-wrap{overflow:auto;max-height:690px;border:1px solid #d7dee8}.route-table{width:100%;border-collapse:collapse;font-size:10.5px;background:#fff}.route-table th{position:sticky;top:0;z-index:3;background:#f8fafc;color:#0f172a;border:1px solid #d7dee8;padding:7px 5px;font-size:9.5px}.route-table td{border:1px solid #e2e8f0;padding:5px 5px;vertical-align:middle}.phase-band{color:#fff;font-weight:900;text-align:center;width:54px}.phase-blank{color:transparent}.task-name{min-width:230px}.pct-cell{min-width:145px;white-space:nowrap}.mini-track{display:inline-block;width:82px;height:14px;background:#e5e7eb;border-radius:2px;margin-right:6px;vertical-align:middle;overflow:hidden}.mini-fill{height:100%}.state-cell{white-space:nowrap}.critical-cell{text-align:center;white-space:nowrap}
+    .route-table-wrap{overflow:auto;max-height:820px;border:1px solid #d7dee8}.route-table{width:100%;border-collapse:collapse;font-size:11.5px;background:#fff}.route-table th{position:sticky;top:0;z-index:3;background:#f8fafc;color:#0f172a;border:1px solid #d7dee8;padding:9px 7px;font-size:10.5px}.route-table td{border:1px solid #e2e8f0;padding:7px 6px;vertical-align:middle}.phase-band{color:#fff;font-weight:900;text-align:center;width:54px}.phase-blank{color:transparent}.task-name{min-width:270px}.pct-cell{min-width:165px;white-space:nowrap}.mini-track{display:inline-block;width:100px;height:16px;background:#e5e7eb;border-radius:2px;margin-right:6px;vertical-align:middle;overflow:hidden}.mini-fill{height:100%}.state-cell{white-space:nowrap}.critical-cell{text-align:center;white-space:nowrap}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1899,7 +1901,7 @@ elif page == "⚠️ Ruta crítica":
             st.plotly_chart(figw,use_container_width=True,config={'displayModeBar':False})
         else: st.info('Sin historial semanal')
 
-    left,right=st.columns([0.98,1.32], gap='small')
+    left,right=st.columns([1.08,1.55], gap='medium')
     selected_phases=allowed_phases()
     with left:
         st.markdown('<div class="route-panel"><div class="route-panel-title">RUTA CRÍTICA ACTUALIZADA</div>',unsafe_allow_html=True)
@@ -1927,7 +1929,7 @@ elif page == "⚠️ Ruta crítica":
             fig.update_yaxes(autorange='reversed',title=None,tickfont=dict(size=9))
             fig.update_xaxes(title=None,tickformat='%b\n%d',side='top',gridcolor='#e5e7eb')
             fig.add_vline(x=pd.Timestamp(route_review_date).timestamp()*1000,line_color='#e11d1d',line_dash='dash',line_width=1.5)
-            fig.update_layout(height=700,margin=dict(l=0,r=5,t=40,b=5),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
+            fig.update_layout(height=820,margin=dict(l=0,r=8,t=45,b=8),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
             st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
             delayed=int((gdf['Días atraso']>0).sum()); max_delay=int(gdf['Días atraso'].max()) if len(gdf) else 0
             m1,m2,m3=st.columns(3); m1.metric('HOY / revisión',pd.Timestamp(route_review_date).strftime('%d-%m-%Y')); m2.metric('Actividades atrasadas',delayed); m3.metric('Mayor atraso',f'{max_delay} días')
