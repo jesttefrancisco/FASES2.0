@@ -160,3 +160,11 @@ Además:
 - Fases 2, 3 y 4 corrigen el desfase de 2 días según la tabla de programación compartida.
 - La secuencia se aplica a todos los pisos 1–9.
 - Fase 4 / Piso 9 conserva término 30-08-2027 (inicio 02-08-2027, 28 días según la lógica actual de la app).
+
+## v35 · Autoguardado verificado
+- Cada cambio de avance se guarda automáticamente en Supabase.
+- El guardado se verifica leyendo nuevamente el registro persistido.
+- La app muestra confirmación o error con fecha/hora y actividad.
+- Fases completas ya no requiere botón Guardar: cada celda modificada se autoguarda.
+- Se eliminó el caché de carga de fases para reflejar cambios de otros computadores con mayor rapidez.
+- Se incluye botón para verificar conexión y último cambio guardado por fase.

@@ -100,24 +100,65 @@ def db_phase_updates():
         return []
 
 def db_upsert_phase_update(phase, excel_row, activity, percent, username):
+    """Guarda una celda en Supabase y confirma que quedó persistida."""
     client = get_supabase()
     if client is None:
-        return False
+        return False, st.session_state.get("supabase_error", "Supabase no está disponible.")
     payload = {
-        "phase": phase,
+        "phase": str(phase),
         "excel_row": int(excel_row),
         "activity": str(activity),
         "percent": float(percent),
         "updated_by": str(username),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     try:
         client.table("phase_updates").upsert(
             payload, on_conflict="phase,excel_row,activity"
         ).execute()
-        return True
-    except Exception:
-        return False
+        check = (
+            client.table("phase_updates")
+            .select("percent,updated_by,updated_at")
+            .eq("phase", str(phase))
+            .eq("excel_row", int(excel_row))
+            .eq("activity", str(activity))
+            .limit(1)
+            .execute()
+        )
+        rows = check.data or []
+        if not rows:
+            return False, "Supabase no devolvió el registro después de guardar."
+        saved = float(rows[0].get("percent", -999))
+        if abs(saved - float(percent)) > 1e-6:
+            return False, f"Verificación inconsistente: se pidió {percent}% y la base devolvió {saved}%."
+        return True, rows[0].get("updated_at") or payload["updated_at"]
+    except Exception as e:
+        return False, str(e)
+
+def set_save_status(ok, message, phase=None, excel_row=None, activity=None):
+    st.session_state["last_save_status"] = {
+        "ok": bool(ok),
+        "message": str(message),
+        "phase": phase,
+        "excel_row": excel_row,
+        "activity": activity,
+        "local_time": datetime.now().astimezone().strftime("%d-%m-%Y %H:%M:%S"),
+    }
+
+def show_save_status():
+    info = st.session_state.get("last_save_status")
+    if not info:
+        return
+    prefix = "✅ Autoguardado confirmado" if info.get("ok") else "❌ Error de autoguardado"
+    detail = f"{prefix} · {info.get('local_time','')}"
+    if info.get("phase"):
+        detail += f" · {str(info['phase']).replace('FASE','Fase ')}"
+    if info.get("activity"):
+        detail += f" · {info['activity']}"
+    if info.get("ok"):
+        st.success(detail)
+    else:
+        st.error(detail + f" · {info.get('message','')}")
 
 def db_weekly_history():
     client = get_supabase()
@@ -218,7 +259,7 @@ div[data-testid="stDataFrame"] {font-size:12px;}
 </style>
 """, unsafe_allow_html=True)
 
-APP_VERSION = "v31"
+APP_VERSION = "v35"
 
 # Al cambiar de versión, reemplazar cualquier copia temporal antigua por
 # la plantilla depurada incluida en esta versión. Los avances reales se
@@ -311,7 +352,6 @@ def get_sheet_names(path):
     wb.close()
     return names
 
-@st.cache_data(show_spinner=False, ttl=3)
 def load_phase(path, phase):
     wb = load_workbook(path, read_only=False, data_only=False)
     ws = wb[phase]
@@ -696,23 +736,34 @@ def recalc_department_progress(ws, row, phase):
     ws.cell(row, ws.max_column).value = result
 
 def save_department(path, phase, excel_row, activity_values):
+    """Guarda únicamente cambios confirmados; Supabase es la fuente persistente."""
     wb = load_workbook(path)
     ws = wb[phase]
     headers = [c.value for c in ws[1]]
     header_to_col = {str(h): i+1 for i,h in enumerate(headers) if h is not None}
-
     username = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
+    saved = 0
+    errors = []
     for activity, pct in activity_values.items():
         col = header_to_col.get(activity)
-        if col:
-            ws.cell(excel_row, col).value = from_percent(pct, phase)
-            db_upsert_phase_update(phase, excel_row, activity, pct, username)
+        if not col:
+            continue
+        ok, msg = db_upsert_phase_update(phase, excel_row, activity, pct, username)
+        if not ok:
+            errors.append(f"{activity}: {msg}")
+            continue
+        ws.cell(excel_row, col).value = from_percent(pct, phase)
+        saved += 1
+        set_save_status(True, msg, phase, excel_row, activity)
 
-    recalc_department_progress(ws, excel_row, phase)
-    wb.save(path)
+    if saved:
+        recalc_department_progress(ws, excel_row, phase)
+        wb.save(path)
     wb.close()
-    # Forzar refresco inmediato de todas las vistas que dependen del avance.
     st.cache_data.clear()
+    if errors:
+        set_save_status(False, " | ".join(errors), phase, excel_row)
+    return saved, errors
 
 def save_full_phase(path, phase, edited_df, original_df):
     """
@@ -756,9 +807,14 @@ def save_full_phase(path, phase, edited_df, original_df):
             if not excel_col:
                 continue
 
-            ws.cell(excel_row, excel_col).value = from_percent(new_num, phase)
             username = st.session_state.get("user_name", st.session_state.get("username", "Usuario"))
-            db_upsert_phase_update(phase, excel_row, col, new_num, username)
+            ok, msg = db_upsert_phase_update(phase, excel_row, col, new_num, username)
+            if not ok:
+                wb.close()
+                set_save_status(False, msg, phase, excel_row, col)
+                raise RuntimeError(f"No se pudo guardar {phase} fila {excel_row} / {col}: {msg}")
+            ws.cell(excel_row, excel_col).value = from_percent(new_num, phase)
+            set_save_status(True, msg, phase, excel_row, col)
             changed_rows.add(excel_row)
             changed_cells += 1
 
@@ -1714,12 +1770,28 @@ elif page == "🧱 Actualizar avances":
     st.markdown(f"### Nuevo avance calculado: **{calculated:.1f}%**")
     st.progress(min(max(calculated/100,0),1))
 
+    st.caption("☁️ Autoguardado online activo: cada cambio se guarda y verifica automáticamente en Supabase.")
     if not can_edit_phase(phase):
         st.warning("No tienes permiso para modificar esta fase.")
-    elif st.button("💾 GUARDAR ACTUALIZACIÓN",type="primary",use_container_width=True):
-        save_department(st.session_state.workbook_path,phase,excel_row,edits)
-        st.success(f"Departamento {depto} actualizado correctamente. Dashboard, gráficos y Gantt se refrescarán con este nuevo avance.")
-        st.rerun()
+    else:
+        changed = {}
+        for activity in activities:
+            original_pct = round(to_percent(rec[activity], phase), 1)
+            new_pct = round(float(edits[activity]), 1)
+            if abs(new_pct - original_pct) >= 0.05:
+                changed[activity] = new_pct
+        if changed:
+            with st.spinner("Guardando cambio en línea…"):
+                saved, errors = save_department(st.session_state.workbook_path, phase, excel_row, changed)
+            if errors:
+                show_save_status()
+                st.stop()
+            st.session_state["autosave_notice"] = f"{saved} cambio(s) guardado(s) en Depto {depto}."
+            st.rerun()
+        if st.session_state.pop("autosave_notice", None):
+            show_save_status()
+        else:
+            show_save_status()
 
 elif page == "🏢 Fases completas":
     st.markdown('<div class="section">EDITAR FASE COMPLETA</div>', unsafe_allow_html=True)
@@ -1756,6 +1828,7 @@ elif page == "🏢 Fases completas":
                 format="%.1f%%"
             )
 
+    editor_key = f"full_editor_{phase}"
     edited = st.data_editor(
         editor_source,
         use_container_width=True,
@@ -1763,8 +1836,40 @@ elif page == "🏢 Fases completas":
         num_rows="fixed",
         disabled=disabled_cols,
         column_config=column_cfg,
-        key=f"full_editor_{phase}"
+        key=editor_key
     )
+
+    st.caption("☁️ Autoguardado online activo: al modificar una celda, el cambio se guarda y verifica en Supabase automáticamente.")
+    if can_edit_phase(phase):
+        editable_cols = [c for c in visible_cols if c not in disabled_cols]
+        has_changes = False
+        for c in editable_cols:
+            a = pd.to_numeric(edited[c], errors="coerce").fillna(0.0)
+            b = pd.to_numeric(editor_source[c], errors="coerce").fillna(0.0)
+            if ((a - b).abs() >= 0.05).any():
+                has_changes = True
+                break
+        if has_changes:
+            edited_full = original.copy()
+            for c in visible_cols:
+                edited_full[c] = edited[c]
+            try:
+                with st.spinner("Autoguardando cambios de la fase…"):
+                    changed_cells, changed_rows = save_full_phase(
+                        st.session_state.workbook_path, phase, edited_full, original
+                    )
+                if changed_cells:
+                    st.session_state["phase_autosave_notice"] = (
+                        f"{changed_cells} celda(s) · {changed_rows} departamento(s)"
+                    )
+                    st.rerun()
+            except Exception as e:
+                set_save_status(False, str(e), phase)
+                show_save_status()
+    if st.session_state.pop("phase_autosave_notice", None):
+        show_save_status()
+    else:
+        show_save_status()
 
     with st.expander("🎨 Vista semáforo de porcentajes", expanded=False):
         preview_cols = [c for c in visible_cols if c not in ["Fase","Piso","Torre","Departamento"]]
@@ -1778,27 +1883,25 @@ elif page == "🏢 Fases completas":
     with csave:
         if not can_edit_phase(phase):
             st.info("Modo solo lectura: no tienes permiso para modificar esta fase.")
-        elif st.button("💾 GUARDAR CAMBIOS DE LA FASE", type="primary", use_container_width=True):
-            edited_full = original.copy()
-            for c in visible_cols:
-                edited_full[c] = edited[c]
-
-            changed_cells, changed_rows = save_full_phase(
-                st.session_state.workbook_path,
-                phase,
-                edited_full,
-                original
-            )
-            st.success(
-                f"Guardado correctamente: {changed_cells} celdas modificadas "
-                f"en {changed_rows} departamentos. Dashboard, gráficos y Gantt usarán estos mismos datos inmediatamente."
-            )
-            st.rerun()
+        elif st.button("🔎 VERIFICAR CONEXIÓN Y ÚLTIMO GUARDADO", use_container_width=True):
+            ok_db, db_msg = supabase_status()
+            if ok_db:
+                rows = [r for r in db_phase_updates() if r.get("phase") == phase]
+                if rows:
+                    latest = max(rows, key=lambda r: str(r.get("updated_at", "")))
+                    st.success(
+                        f"Base online conectada. Último cambio: {latest.get('updated_at','—')} · "
+                        f"{latest.get('updated_by','—')} · {latest.get('activity','—')} = {float(latest.get('percent',0)):.1f}%"
+                    )
+                else:
+                    st.info("Base online conectada, sin cambios guardados todavía para esta fase.")
+            else:
+                st.error(f"No hay conexión con Supabase: {db_msg}")
 
     with cinfo:
         st.info(
-            "Al guardar, la aplicación recalcula automáticamente el % Avance Real Depto "
-            "de los departamentos modificados y el Dashboard se actualiza."
+            "No es necesario presionar Guardar. Cada celda modificada se autoguarda en la base online, "
+            "se verifica y luego se recalculan Dashboard, Ruta Crítica y Gantt."
         )
 
 elif page == "📋 Resumen":
