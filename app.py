@@ -1835,15 +1835,21 @@ elif page == "📅 Carta Gantt":
     if gdf.empty:
         st.warning("No hay datos disponibles para construir la Carta Gantt.")
     else:
+        phase_rank={'Fase 1':1,'Fase 2':2,'Fase 3':3,'Fase 4':4}
+        gdf['Piso_num']=gdf['Piso'].str.extract(r'(\d+)').astype(int)
+        gdf['Fase_num']=gdf['Fase'].map(phase_rank).fillna(99).astype(int)
+        gdf=gdf.sort_values(['Fase_num','Piso_num'],kind='stable').reset_index(drop=True)
+        gdf['Etiqueta']=gdf.apply(lambda r: f"{r['Fase']} · Piso {int(r['Piso_num'])} | {r['Inicio'].strftime('%d-%m-%Y')} → {r['Término'].strftime('%d-%m-%Y')}",axis=1)
+        category_order=gdf['Etiqueta'].tolist()
         fig = px.timeline(
-            gdf, x_start="Inicio", x_end="Término", y="Tarea", color="Fase", text="Progreso (%)",
+            gdf, x_start="Inicio", x_end="Término", y="Etiqueta", color="Fase", text="Progreso (%)",
             hover_data={
                 "Piso":True,"Días":True,"Progreso (%)":':.1f',"Días atraso":True,"Estado plazo":True,
                 "Inicio":'|%d-%m-%Y',"Término":'|%d-%m-%Y'
             }
         )
         fig.update_traces(texttemplate="%{text:.1f}%", textposition="inside")
-        fig.update_yaxes(autorange="reversed", title=None)
+        fig.update_yaxes(title=None, categoryorder='array', categoryarray=category_order, autorange="reversed", tickmode='array', tickvals=category_order, ticktext=category_order)
         fig.update_xaxes(title="Programación oficial", tickformat="%d-%m-%Y")
         # Línea roja = fecha desde la cual se calculan los días de atraso.
         fig.add_vline(x=pd.Timestamp(review_date).timestamp()*1000, line_dash="dash", line_color="red")
@@ -1857,7 +1863,7 @@ elif page == "📅 Carta Gantt":
         a2.metric("Actividades atrasadas", delayed)
         a3.metric("Mayor atraso", f"{max_delay} días")
 
-        detail = gdf[["Fase","Piso","Inicio","Término","Días","Progreso (%)","Días atraso","Estado plazo"]].copy()
+        detail = gdf.sort_values(["Fase_num","Piso_num"])[["Fase","Piso","Inicio","Término","Días","Progreso (%)","Días atraso","Estado plazo"]].copy()
         detail["Inicio"] = detail["Inicio"].dt.strftime("%d-%m-%Y")
         detail["Término"] = detail["Término"].dt.strftime("%d-%m-%Y")
         st.dataframe(style_percent_df(detail, ["Progreso (%)"]), use_container_width=True, hide_index=True, height=420)
@@ -1926,12 +1932,19 @@ elif page == "⚠️ Ruta crítica":
                 return 'No iniciado (0%)'
             gdf['Estado visual']=gdf.apply(gantt_state,axis=1)
             cmap={'Completado (100%)':'#1f8f3a','En progreso':'#7bc96f','En riesgo':'#f6bf26','No iniciado (0%)':'#c9c9c9'}
-            fig=px.timeline(gdf,x_start='Inicio',x_end='Término',y='Tarea',color='Estado visual',text='Progreso (%)',color_discrete_map=cmap,hover_data={'Piso':True,'Días atraso':True,'Estado plazo':True})
+            # Orden fijo y correlativo: Fase 1 Piso 1-9, luego Fase 2, Fase 3 y Fase 4.
+            phase_rank={'Fase 1':1,'Fase 2':2,'Fase 3':3,'Fase 4':4}
+            gdf['Piso_num']=gdf['Piso'].str.extract(r'(\d+)').astype(int)
+            gdf['Fase_num']=gdf['Fase'].map(phase_rank).fillna(99).astype(int)
+            gdf=gdf.sort_values(['Fase_num','Piso_num'],kind='stable').reset_index(drop=True)
+            gdf['Etiqueta']=gdf.apply(lambda r: f"{r['Fase']} · Piso {int(r['Piso_num'])}   |   {r['Inicio'].strftime('%d-%m-%Y')} → {r['Término'].strftime('%d-%m-%Y')}",axis=1)
+            category_order=gdf['Etiqueta'].tolist()
+            fig=px.timeline(gdf,x_start='Inicio',x_end='Término',y='Etiqueta',color='Estado visual',text='Progreso (%)',color_discrete_map=cmap,hover_data={'Fase':True,'Piso':True,'Inicio':'|%d-%m-%Y','Término':'|%d-%m-%Y','Días':True,'Días atraso':True,'Estado plazo':True})
             fig.update_traces(texttemplate='%{text:.0f}%',textposition='outside')
-            fig.update_yaxes(autorange='reversed',title=None,tickfont=dict(size=9))
-            fig.update_xaxes(title=None,tickformat='%b\n%d',side='top',gridcolor='#e5e7eb')
+            fig.update_yaxes(title=None,tickfont=dict(size=9),categoryorder='array',categoryarray=category_order,autorange='reversed',tickmode='array',tickvals=category_order,ticktext=category_order)
+            fig.update_xaxes(title=None,tickformat='%d-%m-%Y',side='top',gridcolor='#e5e7eb')
             fig.add_vline(x=pd.Timestamp(route_review_date).timestamp()*1000,line_color='#e11d1d',line_dash='dash',line_width=1.5)
-            fig.update_layout(height=820,margin=dict(l=0,r=8,t=45,b=8),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
+            fig.update_layout(height=max(980, 27*len(gdf)+90),margin=dict(l=0,r=8,t=45,b=8),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
             st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
             delayed=int((gdf['Días atraso']>0).sum()); max_delay=int(gdf['Días atraso'].max()) if len(gdf) else 0
             m1,m2,m3=st.columns(3); m1.metric('HOY / revisión',pd.Timestamp(route_review_date).strftime('%d-%m-%Y')); m2.metric('Actividades atrasadas',delayed); m3.metric('Mayor atraso',f'{max_delay} días')
