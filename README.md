@@ -154,3 +154,9 @@ Además:
 ## v32
 - Carta Gantt: Fase 4 / Piso 9 termina el 30-08-2027.
 - Paneles Ruta Crítica y Carta Gantt ampliados para pantallas de escritorio.
+
+## v33 — Corrección correlativa Carta Gantt
+- Fase 1 mantiene las fechas base confirmadas.
+- Fases 2, 3 y 4 corrigen el desfase de 2 días según la tabla de programación compartida.
+- La secuencia se aplica a todos los pisos 1–9.
+- Fase 4 / Piso 9 conserva término 30-08-2027 (inicio 02-08-2027, 28 días según la lógica actual de la app).
