@@ -1805,6 +1805,14 @@ elif page == "🏢 Fases completas":
 
     original = phase_editor_df(st.session_state.workbook_path, phase)
 
+    # Indicadores calculados desde la misma fuente de datos que alimenta la tabla.
+    current_phase_pct = phase_summary(st.session_state.workbook_path, phase)
+    cphase, cdept = st.columns(2)
+    cphase.metric("Avance actual de la fase", f"{current_phase_pct:.1f}%")
+    if "% Avance Real Depto" in original.columns:
+        dept_vals = pd.to_numeric(original["% Avance Real Depto"], errors="coerce").dropna()
+        cdept.metric("Promedio departamentos", f"{float(dept_vals.mean()) if len(dept_vals) else 0.0:.1f}%")
+
     # No mostrar _excel_row en pantalla.
     visible_cols = [c for c in original.columns if c != "_excel_row"]
     editor_source = original[visible_cols].copy()
@@ -1814,7 +1822,7 @@ elif page == "🏢 Fases completas":
 
     st.caption(
         "Puedes modificar las partidas. Las columnas Fase, Piso, Torre, Departamento y "
-        "% Avance Real Depto quedan protegidas; el avance total se recalcula automáticamente."
+        "% Avance Real Depto quedan protegidas; el avance total se recalcula automáticamente después de cada autoguardado."
     )
 
     column_cfg = {}
@@ -1828,7 +1836,12 @@ elif page == "🏢 Fases completas":
                 format="%.1f%%"
             )
 
-    editor_key = f"full_editor_{phase}"
+    # Cambiar la identidad del editor después de cada autoguardado evita que
+    # Streamlit conserve en memoria el antiguo % Avance Real Depto.
+    revision_key = f"full_editor_revision_{phase}"
+    if revision_key not in st.session_state:
+        st.session_state[revision_key] = 0
+    editor_key = f"full_editor_{phase}_{st.session_state[revision_key]}"
     edited = st.data_editor(
         editor_source,
         use_container_width=True,
@@ -1859,8 +1872,12 @@ elif page == "🏢 Fases completas":
                         st.session_state.workbook_path, phase, edited_full, original
                     )
                 if changed_cells:
+                    # El guardado ya fue confirmado en Supabase. Se invalida el editor
+                    # para que vuelva a leer la base online y recalcule inmediatamente
+                    # % Avance Real Depto, piso y fase.
+                    st.session_state[revision_key] += 1
                     st.session_state["phase_autosave_notice"] = (
-                        f"{changed_cells} celda(s) · {changed_rows} departamento(s)"
+                        f"{changed_cells} celda(s) · {changed_rows} departamento(s) · porcentajes recalculados"
                     )
                     st.rerun()
             except Exception as e:
