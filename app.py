@@ -1380,29 +1380,32 @@ with sync_a:
 live_summaries = {p: phase_summary(st.session_state.workbook_path, p) for p in PHASES}
 live_general = round(sum(live_summaries.values()) / 4, 1)
 
-# AVANCE OFICIAL VISIBLE: lectura DIRECTA del último registro de weekly_history.
-# No usa cache para evitar que un computador muestre un corte anterior.
+# FUENTES DE AVANCE:
+# - Dashboard y tarjetas globales: avance VIVO, calculado desde phase_updates en Supabase.
+# - Comparación semanal: último corte histórico de weekly_history.
+# Nunca se reemplaza el avance vivo por el corte semanal.
 summaries = dict(live_summaries)
 general = live_general
 official_snapshot_date = None
 official_snapshot_user = None
-official_snapshot_source = "avance en vivo"
+official_snapshot_source = "weekly_history · Supabase"
+official_summaries = None
+official_general = None
 _latest_official = db_latest_weekly_snapshot()
 if _latest_official:
     try:
-        summaries = {
+        official_summaries = {
             "FASE1": float(pd.to_numeric(_latest_official.get("fase1"), errors="coerce") or 0),
             "FASE2": float(pd.to_numeric(_latest_official.get("fase2"), errors="coerce") or 0),
             "FASE3": float(pd.to_numeric(_latest_official.get("fase3"), errors="coerce") or 0),
             "FASE4": float(pd.to_numeric(_latest_official.get("fase4"), errors="coerce") or 0),
         }
-        general = float(pd.to_numeric(_latest_official.get("general"), errors="coerce") or 0)
+        official_general = float(pd.to_numeric(_latest_official.get("general"), errors="coerce") or 0)
         official_snapshot_date = pd.to_datetime(_latest_official.get("update_date"), errors="coerce")
         official_snapshot_user = _latest_official.get("updated_by")
-        official_snapshot_source = "weekly_history · Supabase"
     except Exception:
-        summaries = dict(live_summaries)
-        general = live_general
+        official_summaries = None
+        official_general = None
 
 # AVANCE GENERAL SIEMPRE VISIBLE EN TODAS LAS PÁGINAS
 st.markdown('<div class="section">AVANCE GENERAL DEL PROYECTO</div>', unsafe_allow_html=True)
@@ -1426,16 +1429,20 @@ for col, phase in zip([p1col,p2col,p3col,p4col], PHASES):
         )
         st.progress(min(max(val/100,0),1))
 
-if official_snapshot_date is not None and not pd.isna(official_snapshot_date):
+st.caption(
+    f"🟢 Avance actual en vivo · General {general:.1f}% · "
+    f"F1 {summaries['FASE1']:.1f}% · F2 {summaries['FASE2']:.1f}% · "
+    f"F3 {summaries['FASE3']:.1f}% · F4 {summaries['FASE4']:.1f}% · "
+    "Fuente: cambios guardados en Supabase."
+)
+if official_snapshot_date is not None and not pd.isna(official_snapshot_date) and official_summaries is not None:
     _who = f" · registrado por {official_snapshot_user}" if official_snapshot_user else ""
     st.caption(
-        f"✅ Corte oficial usado: {official_snapshot_date.strftime('%d-%m-%Y')} · "
-        f"Fuente: {official_snapshot_source}{_who}. "
-        f"General {general:.1f}% · F1 {summaries['FASE1']:.1f}% · "
-        f"F2 {summaries['FASE2']:.1f}% · F3 {summaries['FASE3']:.1f}% · F4 {summaries['FASE4']:.1f}%."
+        f"📅 Último corte semanal: {official_snapshot_date.strftime('%d-%m-%Y')}{_who} · "
+        f"General {official_general:.1f}% · F1 {official_summaries['FASE1']:.1f}% · "
+        f"F2 {official_summaries['FASE2']:.1f}% · F3 {official_summaries['FASE3']:.1f}% · "
+        f"F4 {official_summaries['FASE4']:.1f}%."
     )
-else:
-    st.warning("No se encontró un corte oficial en weekly_history; se muestra temporalmente el avance calculado desde las partidas actuales.")
 st.divider()
 
 
@@ -1490,15 +1497,19 @@ if page == "📊 Dashboard":
                 'service_role_key = "sb_secret_..."'
             )
 
-    if official_snapshot_date is not None and not pd.isna(official_snapshot_date):
-        st.info(
-            f"📌 Dashboard sincronizado con el último corte oficial de Comparación semanal: "
-            f"{official_snapshot_date.strftime('%d-%m-%Y')} · "
-            f"General {general:.1f}% · Fase 1 {summaries['FASE1']:.1f}% · "
-            f"Fase 2 {summaries['FASE2']:.1f}% · Fase 3 {summaries['FASE3']:.1f}% · Fase 4 {summaries['FASE4']:.1f}%."
+    st.success(
+        f"🔄 Dashboard en vivo · General {general:.1f}% · "
+        f"Fase 1 {summaries['FASE1']:.1f}% · Fase 2 {summaries['FASE2']:.1f}% · "
+        f"Fase 3 {summaries['FASE3']:.1f}% · Fase 4 {summaries['FASE4']:.1f}%. "
+        "Se recalcula desde las partidas guardadas en Supabase."
+    )
+    if official_snapshot_date is not None and not pd.isna(official_snapshot_date) and official_summaries is not None:
+        st.caption(
+            f"Referencia histórica · último corte semanal {official_snapshot_date.strftime('%d-%m-%Y')}: "
+            f"General {official_general:.1f}% · F1 {official_summaries['FASE1']:.1f}% · "
+            f"F2 {official_summaries['FASE2']:.1f}% · F3 {official_summaries['FASE3']:.1f}% · "
+            f"F4 {official_summaries['FASE4']:.1f}%."
         )
-    else:
-        st.warning("Dashboard sin corte oficial disponible; se está mostrando el avance en vivo.")
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),

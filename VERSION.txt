@@ -1,0 +1,3 @@
+v37 - Dashboard en vivo desde Supabase\nDashboard/tarjetas: avance actual desde phase_updates.\nComparación semanal: historial de weekly_history.\nEOF
+cd /mnt/data/v37work && zip -qr /mnt/data/CONTROL_FASES_SFCO211_APP_PRO_v37_DASHBOARD_EN_VIVO.zip .
+ls -lh /mnt/data/CONTROL_FASES_SFCO211_APP_PRO_v37_DASHBOARD_EN_VIVO.zip
