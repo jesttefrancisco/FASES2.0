@@ -1,3 +1,5 @@
-v37 - Dashboard en vivo desde Supabase\nDashboard/tarjetas: avance actual desde phase_updates.\nComparación semanal: historial de weekly_history.\nEOF
-cd /mnt/data/v37work && zip -qr /mnt/data/CONTROL_FASES_SFCO211_APP_PRO_v37_DASHBOARD_EN_VIVO.zip .
-ls -lh /mnt/data/CONTROL_FASES_SFCO211_APP_PRO_v37_DASHBOARD_EN_VIVO.zip
+v38 - Protección de avance histórico + Dashboard sincronizado
+- Evita que una versión nueva reduzca visualmente el avance por phase_updates incompletos.
+- Dashboard y Avance actual usan como mínimo el último corte semanal confirmado.
+- Mantiene autoguardado verificado de v35/v36.
+- No sobrescribe ni reinserta avances existentes.

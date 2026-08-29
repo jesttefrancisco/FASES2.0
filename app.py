@@ -1381,9 +1381,12 @@ live_summaries = {p: phase_summary(st.session_state.workbook_path, p) for p in P
 live_general = round(sum(live_summaries.values()) / 4, 1)
 
 # FUENTES DE AVANCE:
-# - Dashboard y tarjetas globales: avance VIVO, calculado desde phase_updates en Supabase.
-# - Comparación semanal: último corte histórico de weekly_history.
-# Nunca se reemplaza el avance vivo por el corte semanal.
+# - live_summaries: cálculo crudo desde el detalle disponible en Excel + phase_updates.
+# - weekly_history: último corte histórico confirmado.
+# PROTECCIÓN DE CONTINUIDAD: una actualización de versión o un registro faltante en
+# phase_updates no puede hacer retroceder el Dashboard por debajo del último corte
+# confirmado. El corte semanal se usa como piso de recuperación, no como sustituto
+# del avance vivo.
 summaries = dict(live_summaries)
 general = live_general
 official_snapshot_date = None
@@ -1406,6 +1409,19 @@ if _latest_official:
     except Exception:
         official_summaries = None
         official_general = None
+
+# Recuperación segura del avance: si el detalle online está incompleto, nunca mostrar
+# menos que el último corte semanal confirmado. Esto evita regresiones como 19→17 o 8→4
+# causadas por registros parciales de phase_updates.
+if official_summaries is not None:
+    summaries = {
+        p: round(max(float(live_summaries.get(p, 0.0)), float(official_summaries.get(p, 0.0))), 1)
+        for p in PHASES
+    }
+    general = round(max(sum(summaries.values()) / 4.0, float(official_general or 0.0)), 1)
+else:
+    summaries = dict(live_summaries)
+    general = live_general
 
 # AVANCE GENERAL SIEMPRE VISIBLE EN TODAS LAS PÁGINAS
 st.markdown('<div class="section">AVANCE GENERAL DEL PROYECTO</div>', unsafe_allow_html=True)
@@ -1433,8 +1449,10 @@ st.caption(
     f"🟢 Avance actual en vivo · General {general:.1f}% · "
     f"F1 {summaries['FASE1']:.1f}% · F2 {summaries['FASE2']:.1f}% · "
     f"F3 {summaries['FASE3']:.1f}% · F4 {summaries['FASE4']:.1f}% · "
-    "Fuente: cambios guardados en Supabase."
+    "Fuente: cambios guardados en Supabase + protección del último corte confirmado."
 )
+if official_summaries is not None and any(float(live_summaries[p]) < float(official_summaries[p]) for p in PHASES):
+    st.caption("🛡️ Recuperación activa: el detalle online está incompleto en una o más fases; se conserva como mínimo el último avance semanal confirmado para evitar pérdida visual de avance.")
 if official_snapshot_date is not None and not pd.isna(official_snapshot_date) and official_summaries is not None:
     _who = f" · registrado por {official_snapshot_user}" if official_snapshot_user else ""
     st.caption(
@@ -1600,11 +1618,11 @@ elif page == "📆 Comparación semanal":
     # Mostrar siempre el avance ACTUAL EN VIVO, aunque el historial semanal no se haya registrado todavía.
     st.markdown("### Avance actual en vivo")
     a1,a2,a3,a4,a5 = st.columns(5)
-    a1.metric("Avance General", f"{live_general:.1f}%")
-    a2.metric("Fase 1", f"{live_summaries['FASE1']:.0f}%")
-    a3.metric("Fase 2", f"{live_summaries['FASE2']:.0f}%")
-    a4.metric("Fase 3", f"{live_summaries['FASE3']:.0f}%")
-    a5.metric("Fase 4", f"{live_summaries['FASE4']:.0f}%")
+    a1.metric("Avance General", f"{general:.1f}%")
+    a2.metric("Fase 1", f"{summaries['FASE1']:.0f}%")
+    a3.metric("Fase 2", f"{summaries['FASE2']:.0f}%")
+    a4.metric("Fase 3", f"{summaries['FASE3']:.0f}%")
+    a5.metric("Fase 4", f"{summaries['FASE4']:.0f}%")
     st.caption("Estos valores cambian inmediatamente al guardar avances. El bloque siguiente corresponde al historial registrado de los viernes.")
 
     hist = load_weekly_history(st.session_state.workbook_path)
