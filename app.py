@@ -99,6 +99,76 @@ def db_phase_updates():
     except Exception:
         return []
 
+def db_phase_update_history(limit=5000):
+    """Historial inmutable de ediciones (disponible desde v39).
+    Si la tabla aún no fue creada, devuelve [] sin interrumpir la app.
+    """
+    client = get_supabase()
+    if client is None:
+        return []
+    try:
+        res = (
+            client.table("phase_update_history")
+            .select("*")
+            .order("changed_at", desc=True)
+            .limit(int(limit))
+            .execute()
+        )
+        return res.data or []
+    except Exception:
+        return []
+
+def db_log_phase_update(phase, excel_row, activity, old_percent, new_percent, username):
+    """Registra una edición en el historial sin bloquear el autoguardado si la tabla no existe."""
+    client = get_supabase()
+    if client is None:
+        return False
+    try:
+        client.table("phase_update_history").insert({
+            "phase": str(phase),
+            "excel_row": int(excel_row),
+            "activity": str(activity),
+            "old_percent": None if old_percent is None else float(old_percent),
+            "new_percent": float(new_percent),
+            "changed_by": str(username),
+            "changed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+def db_weekly_detail_snapshot(snapshot_date=None, username=None):
+    """Guarda una fotografía detallada de todas las celdas de avance.
+    Se usa desde v39 para permitir recuperación exacta futura.
+    """
+    client = get_supabase()
+    if client is None:
+        return False, "Supabase no disponible"
+    try:
+        date_value = snapshot_date or datetime.now().date().isoformat()
+        rows=[]
+        # phase_updates contiene el estado persistente de las celdas modificadas.
+        for r in db_phase_updates():
+            rows.append({
+                "snapshot_date": date_value,
+                "phase": str(r.get("phase")),
+                "excel_row": int(r.get("excel_row")),
+                "activity": str(r.get("activity")),
+                "percent": float(r.get("percent",0)),
+                "captured_by": str(username or st.session_state.get("user_name","Usuario")),
+            })
+        if rows:
+            # Borrar/recrear solo el mismo día para evitar duplicados parciales.
+            try:
+                client.table("weekly_detail_history").delete().eq("snapshot_date", date_value).execute()
+            except Exception:
+                pass
+            for i in range(0,len(rows),500):
+                client.table("weekly_detail_history").insert(rows[i:i+500]).execute()
+        return True, f"Snapshot detallado {date_value}: {len(rows)} registros."
+    except Exception as e:
+        return False, str(e)
+
 def db_upsert_phase_update(phase, excel_row, activity, percent, username):
     """Guarda una celda en Supabase y confirma que quedó persistida."""
     client = get_supabase()
@@ -113,6 +183,22 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     try:
+        old_percent = None
+        try:
+            before = (
+                client.table("phase_updates")
+                .select("percent")
+                .eq("phase", str(phase))
+                .eq("excel_row", int(excel_row))
+                .eq("activity", str(activity))
+                .limit(1)
+                .execute()
+            )
+            if before.data:
+                old_percent = float(before.data[0].get("percent"))
+        except Exception:
+            old_percent = None
+
         client.table("phase_updates").upsert(
             payload, on_conflict="phase,excel_row,activity"
         ).execute()
@@ -131,6 +217,9 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
         saved = float(rows[0].get("percent", -999))
         if abs(saved - float(percent)) > 1e-6:
             return False, f"Verificación inconsistente: se pidió {percent}% y la base devolvió {saved}%."
+        # Historial inmutable: desde v39 cada cambio queda registrado además del estado actual.
+        if old_percent is None or abs(float(old_percent) - float(percent)) > 1e-6:
+            db_log_phase_update(phase, excel_row, activity, old_percent, percent, username)
         return True, rows[0].get("updated_at") or payload["updated_at"]
     except Exception as e:
         return False, str(e)
@@ -208,7 +297,9 @@ def db_register_weekly(summaries, general, username):
         client.table("weekly_history").upsert(
             payload, on_conflict="update_date"
         ).execute()
-        return True, f"Actualización semanal guardada en línea: {date_value}."
+        snap_ok, snap_msg = db_weekly_detail_snapshot(date_value, username)
+        extra = f" Snapshot detallado: {snap_msg}" if snap_ok else ""
+        return True, f"Actualización semanal guardada en línea: {date_value}." + extra
     except Exception as e:
         return False, f"No se pudo guardar en la base de datos: {e}"
 
@@ -1358,7 +1449,7 @@ with hlogo:
 with htitle:
     st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO 211</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="sf-sub">Panel de control profesional · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
+    f'<div class="sf-sub">Panel de control profesional · v39 recuperación auditada · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
     unsafe_allow_html=True,
 )
 
@@ -2144,6 +2235,62 @@ elif page == "⬆️ Importar / Exportar":
             st.dataframe(backup_df.tail(100), use_container_width=True, height=420)
     else:
         st.warning("No se encontraron cambios detallados en phase_updates. No importes otro Excel hasta revisar la conexión de Supabase.")
+
+    st.markdown("### 🧭 Diagnóstico de recuperación histórica")
+    st.caption(
+        "Compara el detalle actualmente reconstruible desde phase_updates con el último corte semanal. "
+        "Una diferencia positiva significa que el histórico confirma más avance del que puede reconstruirse celda por celda. "
+        "La aplicación NO inventa qué partidas faltan."
+    )
+    _hist_latest = db_latest_weekly_snapshot()
+    _live_diag = {p: phase_summary(st.session_state.workbook_path, p) for p in PHASES}
+    if _hist_latest:
+        _official_diag = {
+            "FASE1": float(pd.to_numeric(_hist_latest.get("fase1"), errors="coerce") or 0),
+            "FASE2": float(pd.to_numeric(_hist_latest.get("fase2"), errors="coerce") or 0),
+            "FASE3": float(pd.to_numeric(_hist_latest.get("fase3"), errors="coerce") or 0),
+            "FASE4": float(pd.to_numeric(_hist_latest.get("fase4"), errors="coerce") or 0),
+        }
+        _diag_rows=[]
+        for _p in PHASES:
+            _gap=round(_official_diag[_p]-float(_live_diag.get(_p,0)),1)
+            _diag_rows.append({
+                "Fase": _p.replace("FASE","Fase "),
+                "Detalle recuperable (%)": round(float(_live_diag.get(_p,0)),1),
+                "Último corte (%)": round(_official_diag[_p],1),
+                "Brecha no reconstruible (pp)": max(0.0,_gap),
+                "Estado": "✅ Completo" if _gap <= 0.05 else "⚠️ Falta detalle histórico",
+            })
+        _diag_df=pd.DataFrame(_diag_rows)
+        st.dataframe(_diag_df, use_container_width=True, hide_index=True)
+        _missing=_diag_df[_diag_df["Brecha no reconstruible (pp)"]>0.05]
+        if len(_missing):
+            st.warning(
+                "El último corte semanal confirma un avance mayor que el detalle actualmente disponible en Supabase. "
+                "Con solo los porcentajes globales no es matemáticamente posible saber qué departamentos/partidas faltan. "
+                "No se realizará ninguna reconstrucción automática que pueda inventar datos."
+            )
+        else:
+            st.success("El detalle online disponible alcanza o supera el último corte semanal en todas las fases.")
+    else:
+        st.info("No existe un corte semanal con el cual comparar el detalle online.")
+
+    _audit_rows = db_phase_update_history()
+    if _audit_rows:
+        _audit_df=pd.DataFrame(_audit_rows)
+        st.success(f"Historial detallado v39 activo: {len(_audit_df):,} cambios auditables.".replace(",","."))
+        st.download_button(
+            "🧾 Descargar historial detallado de cambios (CSV)",
+            data=_audit_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"HISTORIAL_CAMBIOS_SFCO211_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.info(
+            "El historial inmutable empieza a poblarse desde la v39. Si aún no creaste las tablas nuevas en Supabase, "
+            "ejecuta el archivo supabase_setup.sql incluido en esta versión. El autoguardado actual seguirá funcionando igual."
+        )
 
     st.markdown("### Exportar Excel recuperado")
     st.caption(

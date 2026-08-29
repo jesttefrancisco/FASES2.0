@@ -1,5 +1,7 @@
-v38 - Protección de avance histórico + Dashboard sincronizado
-- Evita que una versión nueva reduzca visualmente el avance por phase_updates incompletos.
-- Dashboard y Avance actual usan como mínimo el último corte semanal confirmado.
-- Mantiene autoguardado verificado de v35/v36.
-- No sobrescribe ni reinserta avances existentes.
+SFCO211 APP PRO v39 · RECUPERACIÓN HISTÓRICA AUDITADA
+- Diagnóstico de brecha entre detalle online y último corte semanal.
+- No inventa partidas/departamentos para forzar un porcentaje global.
+- Historial inmutable de cada cambio desde v39 (phase_update_history).
+- Snapshot detallado al registrar cada corte semanal (weekly_detail_history).
+- Respaldo CSV de historial y de phase_updates.
+- Mantiene autoguardado verificado y protección de continuidad de v38.
