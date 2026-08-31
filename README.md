@@ -190,3 +190,7 @@ Además:
 - Cada departamento muestra F1, F2, F3 y F4 calculadas desde Supabase.
 - Semáforo: verde 100%, amarillo 50-99.9%, naranjo 0-49.9%.
 - No modifica ni duplica los avances existentes.
+
+
+## v44
+Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye departamentos 701 a 721. Los avances continúan vinculados por fila/partida a Supabase.

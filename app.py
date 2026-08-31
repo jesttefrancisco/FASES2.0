@@ -2102,7 +2102,7 @@ elif page == "🏙️ Avance por Departamento":
     st.markdown('<div class="section">AVANCE POR DEPARTAMENTO · ELEVACIÓN DEL EDIFICIO</div>', unsafe_allow_html=True)
     st.caption(
         "Vista por Torre y Piso basada en la elevación del proyecto. Debajo de cada departamento se muestra "
-        "el promedio real de Fase 1, Fase 2, Fase 3 y Fase 4, calculado desde las mismas partidas guardadas en Supabase."
+        "un único promedio general por departamento, calculado como el promedio de Fase 1, Fase 2, Fase 3 y Fase 4 desde las mismas partidas guardadas en Supabase."
     )
 
     # Construir una única base por Torre + Piso + Departamento con el promedio real de cada fase.
@@ -2153,8 +2153,8 @@ elif page == "🏙️ Avance por Departamento":
         .elev-depts {display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px;}
         .elev-dept {background:white;border:1px solid #cfd8e3;border-radius:7px;padding:7px;box-shadow:0 1px 2px rgba(0,0,0,.05);min-width:0;}
         .elev-dept-name {font-size:13px;font-weight:800;text-align:center;color:#1f2937;border-bottom:1px solid #e5e7eb;padding-bottom:5px;margin-bottom:5px;}
-        .elev-phases {display:grid;grid-template-columns:1fr 1fr;gap:4px;}
-        .elev-phase {border-radius:5px;padding:4px 2px;text-align:center;font-size:10px;font-weight:800;white-space:nowrap;}
+        .elev-phases {display:block;}
+        .elev-phase {border-radius:6px;padding:7px 4px;text-align:center;font-size:12px;font-weight:800;white-space:nowrap;}
         @media (max-width: 900px){.elev-depts{grid-template-columns:repeat(3,minmax(105px,1fr));}}
         </style>
         """, unsafe_allow_html=True)
@@ -2178,16 +2178,15 @@ elif page == "🏙️ Avance por Departamento":
                 html.append(f'<div class="elev-floor"><div class="elev-floor-label">PISO {_floor}</div><div class="elev-depts">')
                 for _, _r in _fd.iterrows():
                     html.append(f'<div class="elev-dept"><div class="elev-dept-name">DEPTO {int(_r["Departamento"])}</div><div class="elev-phases">')
-                    for _ph, _lab in [("FASE1","F1"),("FASE2","F2"),("FASE3","F3"),("FASE4","F4")]:
-                        _v = float(_r[_ph])
-                        _bg, _fg = _pct_style(_v)
-                        html.append(f'<div class="elev-phase" style="background:{_bg};color:{_fg}">{_lab} { _v:.1f}%</div>')
+                    _v = float(pd.Series([_r["FASE1"], _r["FASE2"], _r["FASE3"], _r["FASE4"]]).mean())
+                    _bg, _fg = _pct_style(_v)
+                    html.append(f'<div class="elev-phase" style="background:{_bg};color:{_fg}">PROMEDIO F1–F4 · {_v:.1f}%</div>')
                     html.append('</div></div>')
                 html.append('</div></div>')
             html.append('</div>')
             st.markdown(''.join(html), unsafe_allow_html=True)
 
-        st.caption("Semáforo: 🟢 100% · 🟡 50%–99,9% · 🟠 0%–49,9%. Los valores se recalculan desde Supabase al actualizar la página.")
+        st.caption("Cada departamento muestra un solo porcentaje: promedio de F1 + F2 + F3 + F4. Semáforo: 🟢 100% · 🟡 50%–99,9% · 🟠 0%–49,9%. Se recalcula desde Supabase al actualizar la página.")
 
 elif page == "📋 Resumen":
     st.caption("El RESUMEN se convierte automáticamente a porcentaje según la fase.")
