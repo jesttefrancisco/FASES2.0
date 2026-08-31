@@ -2180,13 +2180,13 @@ elif page == "🏙️ Avance por Departamento":
                     html.append(f'<div class="elev-dept"><div class="elev-dept-name">DEPTO {int(_r["Departamento"])}</div><div class="elev-phases">')
                     _v = float(pd.Series([_r["FASE1"], _r["FASE2"], _r["FASE3"], _r["FASE4"]]).mean())
                     _bg, _fg = _pct_style(_v)
-                    html.append(f'<div class="elev-phase" style="background:{_bg};color:{_fg}">PROMEDIO F1–F4 · {_v:.1f}%</div>')
+                    html.append(f'<div class="elev-phase" style="background:{_bg};color:{_fg}">{_v:.1f}%</div>')
                     html.append('</div></div>')
                 html.append('</div></div>')
             html.append('</div>')
             st.markdown(''.join(html), unsafe_allow_html=True)
 
-        st.caption("Cada departamento muestra un solo porcentaje: promedio de F1 + F2 + F3 + F4. Semáforo: 🟢 100% · 🟡 50%–99,9% · 🟠 0%–49,9%. Se recalcula desde Supabase al actualizar la página.")
+        st.caption("Cada departamento muestra solamente su promedio final. Semáforo: 🟢 100% · 🟡 50%–99,9% · 🟠 0%–49,9%. Se recalcula desde Supabase al actualizar la página.")
 
 elif page == "📋 Resumen":
     st.caption("El RESUMEN se convierte automáticamente a porcentaje según la fase.")

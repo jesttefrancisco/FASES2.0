@@ -1,1 +1,1 @@
-v44 - Corrección Torre B Piso 7: departamentos 701 a 721
+v45 - Avance por Departamento: mostrar solo porcentaje promedio final
