@@ -1,7 +1,1 @@
-SFCO211 APP PRO v39 · RECUPERACIÓN HISTÓRICA AUDITADA
-- Diagnóstico de brecha entre detalle online y último corte semanal.
-- No inventa partidas/departamentos para forzar un porcentaje global.
-- Historial inmutable de cada cambio desde v39 (phase_update_history).
-- Snapshot detallado al registrar cada corte semanal (weekly_detail_history).
-- Respaldo CSV de historial y de phase_updates.
-- Mantiene autoguardado verificado y protección de continuidad de v38.
+v40 · Lectura completa Supabase + recuperación estable

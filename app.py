@@ -89,34 +89,59 @@ def supabase_status():
         return True, "Conectada"
     return False, st.session_state.get("supabase_error", "No se pudo inicializar Supabase.")
 
-def db_phase_updates():
-    client = get_supabase()
-    if client is None:
-        return []
-    try:
-        res = client.table("phase_updates").select("*").execute()
-        return res.data or []
-    except Exception:
-        return []
+def _db_select_all(table_name, select="*", order_by=None, desc=False, page_size=1000):
+    """Lee TODOS los registros de una tabla Supabase mediante paginación.
 
-def db_phase_update_history(limit=5000):
-    """Historial inmutable de ediciones (disponible desde v39).
-    Si la tabla aún no fue creada, devuelve [] sin interrumpir la app.
+    Supabase/PostgREST limita el número de filas devueltas por petición. Si no se
+    pagina, una obra con muchas actualizaciones puede reconstruirse parcialmente y
+    hacer que los porcentajes parezcan retroceder aunque los datos sí estén guardados.
     """
     client = get_supabase()
     if client is None:
         return []
+    rows = []
+    start = 0
     try:
-        res = (
-            client.table("phase_update_history")
-            .select("*")
-            .order("changed_at", desc=True)
-            .limit(int(limit))
-            .execute()
-        )
-        return res.data or []
-    except Exception:
+        while True:
+            query = client.table(table_name).select(select)
+            if order_by:
+                query = query.order(order_by, desc=bool(desc))
+            res = query.range(start, start + page_size - 1).execute()
+            batch = res.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start += page_size
+        return rows
+    except Exception as e:
+        st.session_state[f"{table_name}_read_error"] = str(e)
         return []
+
+
+def db_phase_updates():
+    # FUENTE PERSISTENTE PRINCIPAL: nunca leerla sin paginación.
+    rows = _db_select_all(
+        "phase_updates",
+        select="*",
+        order_by="id",
+        desc=False,
+        page_size=1000,
+    )
+    st.session_state["phase_updates_loaded_count"] = len(rows)
+    return rows
+
+def db_phase_update_history(limit=5000):
+    """Historial inmutable de ediciones (disponible desde v40).
+    La lectura se pagina para evitar perder registros antiguos al crecer la tabla.
+    """
+    rows = _db_select_all(
+        "phase_update_history",
+        select="*",
+        order_by="changed_at",
+        desc=True,
+        page_size=1000,
+    )
+    return rows[:int(limit)] if limit else rows
 
 def db_log_phase_update(phase, excel_row, activity, old_percent, new_percent, username):
     """Registra una edición en el historial sin bloquear el autoguardado si la tabla no existe."""
@@ -139,7 +164,7 @@ def db_log_phase_update(phase, excel_row, activity, old_percent, new_percent, us
 
 def db_weekly_detail_snapshot(snapshot_date=None, username=None):
     """Guarda una fotografía detallada de todas las celdas de avance.
-    Se usa desde v39 para permitir recuperación exacta futura.
+    Se usa desde v40 para permitir recuperación exacta futura.
     """
     client = get_supabase()
     if client is None:
@@ -217,7 +242,7 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
         saved = float(rows[0].get("percent", -999))
         if abs(saved - float(percent)) > 1e-6:
             return False, f"Verificación inconsistente: se pidió {percent}% y la base devolvió {saved}%."
-        # Historial inmutable: desde v39 cada cambio queda registrado además del estado actual.
+        # Historial inmutable: desde v40 cada cambio queda registrado además del estado actual.
         if old_percent is None or abs(float(old_percent) - float(percent)) > 1e-6:
             db_log_phase_update(phase, excel_row, activity, old_percent, percent, username)
         return True, rows[0].get("updated_at") or payload["updated_at"]
@@ -233,6 +258,15 @@ def set_save_status(ok, message, phase=None, excel_row=None, activity=None):
         "activity": activity,
         "local_time": datetime.now().astimezone().strftime("%d-%m-%Y %H:%M:%S"),
     }
+
+def show_sync_diagnostics():
+    """Indicador simple para confirmar que la reconstrucción online fue completa."""
+    count = st.session_state.get("phase_updates_loaded_count")
+    err = st.session_state.get("phase_updates_read_error")
+    if err:
+        st.error(f"❌ Error leyendo avances online: {err}")
+    elif count is not None:
+        st.caption(f"☁️ Registros de avance cargados desde Supabase: {count:,}".replace(",", "."))
 
 def show_save_status():
     info = st.session_state.get("last_save_status")
@@ -250,14 +284,14 @@ def show_save_status():
         st.error(detail + f" · {info.get('message','')}")
 
 def db_weekly_history():
-    client = get_supabase()
-    if client is None:
-        return []
-    try:
-        res = client.table("weekly_history").select("*").order("update_date").execute()
-        return res.data or []
-    except Exception:
-        return []
+    # También se pagina para que el histórico siga siendo completo con el tiempo.
+    return _db_select_all(
+        "weekly_history",
+        select="*",
+        order_by="update_date",
+        desc=False,
+        page_size=1000,
+    )
 
 def db_latest_weekly_snapshot():
     """Devuelve el último corte oficial directamente desde Supabase, sin cache.
@@ -1449,7 +1483,7 @@ with hlogo:
 with htitle:
     st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO 211</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="sf-sub">Panel de control profesional · v39 recuperación auditada · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
+    f'<div class="sf-sub">Panel de control profesional · v40 recuperación auditada · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
     unsafe_allow_html=True,
 )
 
@@ -2278,7 +2312,7 @@ elif page == "⬆️ Importar / Exportar":
     _audit_rows = db_phase_update_history()
     if _audit_rows:
         _audit_df=pd.DataFrame(_audit_rows)
-        st.success(f"Historial detallado v39 activo: {len(_audit_df):,} cambios auditables.".replace(",","."))
+        st.success(f"Historial detallado v40 activo: {len(_audit_df):,} cambios auditables.".replace(",","."))
         st.download_button(
             "🧾 Descargar historial detallado de cambios (CSV)",
             data=_audit_df.to_csv(index=False).encode("utf-8-sig"),
@@ -2288,7 +2322,7 @@ elif page == "⬆️ Importar / Exportar":
         )
     else:
         st.info(
-            "El historial inmutable empieza a poblarse desde la v39. Si aún no creaste las tablas nuevas en Supabase, "
+            "El historial inmutable empieza a poblarse desde la v40. Si aún no creaste las tablas nuevas en Supabase, "
             "ejecuta el archivo supabase_setup.sql incluido en esta versión. El autoguardado actual seguirá funcionando igual."
         )
 

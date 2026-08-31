@@ -168,3 +168,11 @@ Además:
 - Fases completas ya no requiere botón Guardar: cada celda modificada se autoguarda.
 - Se eliminó el caché de carga de fases para reflejar cambios de otros computadores con mayor rapidez.
 - Se incluye botón para verificar conexión y último cambio guardado por fase.
+
+
+## v40 – corrección de lectura completa
+- `phase_updates` se lee con paginación completa (no solo el primer bloque de Supabase).
+- El avance se reconstruye por `phase + excel_row + activity`.
+- El histórico semanal y la auditoría también usan lectura paginada.
+- Se muestra un diagnóstico con el total de registros online cargados.
+- No requiere volver a ingresar los avances del sábado: si existen en `phase_updates`, se aplican automáticamente.
