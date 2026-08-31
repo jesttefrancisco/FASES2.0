@@ -1,1 +1,1 @@
-v40 · Lectura completa Supabase + recuperación estable
+v41 - Gantt alternativa 2: paneles apilados y cierre mensual hábil

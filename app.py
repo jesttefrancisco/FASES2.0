@@ -131,7 +131,7 @@ def db_phase_updates():
     return rows
 
 def db_phase_update_history(limit=5000):
-    """Historial inmutable de ediciones (disponible desde v40).
+    """Historial inmutable de ediciones (disponible desde v41).
     La lectura se pagina para evitar perder registros antiguos al crecer la tabla.
     """
     rows = _db_select_all(
@@ -164,7 +164,7 @@ def db_log_phase_update(phase, excel_row, activity, old_percent, new_percent, us
 
 def db_weekly_detail_snapshot(snapshot_date=None, username=None):
     """Guarda una fotografía detallada de todas las celdas de avance.
-    Se usa desde v40 para permitir recuperación exacta futura.
+    Se usa desde v41 para permitir recuperación exacta futura.
     """
     client = get_supabase()
     if client is None:
@@ -242,7 +242,7 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
         saved = float(rows[0].get("percent", -999))
         if abs(saved - float(percent)) > 1e-6:
             return False, f"Verificación inconsistente: se pidió {percent}% y la base devolvió {saved}%."
-        # Historial inmutable: desde v40 cada cambio queda registrado además del estado actual.
+        # Historial inmutable: desde v41 cada cambio queda registrado además del estado actual.
         if old_percent is None or abs(float(old_percent) - float(percent)) > 1e-6:
             db_log_phase_update(phase, excel_row, activity, old_percent, percent, username)
         return True, rows[0].get("updated_at") or payload["updated_at"]
@@ -786,23 +786,42 @@ def style_percent_df(df, percent_columns=None):
         styler = styler.format({c:"{:.1f}%" for c in percent_columns}, na_rep="")
     return styler
 
-# Fechas oficiales tomadas de Libro2.xlsx enviado por el usuario.
+# Programación oficial Gantt – Alternativa 2.
+# Orden fijo: Fase 1 Piso 1-9, Fase 2 Piso 1-9, Fase 3 Piso 1-9 y Fase 4 Piso 1-9.
+# Cada piso termina el último día hábil del mismo mes en que inicia.
 GANTT_PLAN = {
-    # Fase 1: fechas base confirmadas por el usuario.
-    "FASE1": [("Piso 1","2026-06-01",30),("Piso 2","2026-07-01",30),("Piso 3","2026-08-01",31),("Piso 4","2026-09-01",31),("Piso 5","2026-10-01",30),("Piso 6","2026-11-01",31),("Piso 7","2026-12-01",30),("Piso 8","2027-01-01",31),("Piso 9","2027-02-01",31)],
-    # Fases 2 a 4: secuencia correlativa corregida según tabla compartida (desfase +2 días).
-    "FASE2": [("Piso 1","2026-10-04",39),("Piso 2","2026-11-04",31),("Piso 3","2026-12-04",30),("Piso 4","2027-01-04",31),("Piso 5","2027-02-03",30),("Piso 6","2027-03-06",31),("Piso 7","2027-04-06",31),("Piso 8","2027-05-04",28),("Piso 9","2027-06-04",31)],
-    "FASE3": [("Piso 1","2026-11-04",31),("Piso 2","2026-12-04",30),("Piso 3","2027-01-04",31),("Piso 4","2027-02-03",30),("Piso 5","2027-03-06",31),("Piso 6","2027-04-06",31),("Piso 7","2027-05-04",28),("Piso 8","2027-06-04",31),("Piso 9","2027-07-04",30)],
-    "FASE4": [("Piso 1","2026-12-04",30),("Piso 2","2027-01-04",31),("Piso 3","2027-02-03",30),("Piso 4","2027-03-06",31),("Piso 5","2027-04-06",31),("Piso 6","2027-05-04",28),("Piso 7","2027-06-04",31),("Piso 8","2027-07-04",30),("Piso 9","2027-08-02",28)],
+    # Fase 1 confirmada desde julio de 2026, un piso por mes.
+    "FASE1": [(f"Piso {i}", f"{y:04d}-{m:02d}-01") for i,(y,m) in enumerate([
+        (2026,7),(2026,8),(2026,9),(2026,10),(2026,11),(2026,12),(2027,1),(2027,2),(2027,3)
+    ], start=1)],
+    # Fases 2 a 4 mantienen sus inicios correlativos confirmados; solo cambia el término al último día hábil del mes.
+    "FASE2": [(f"Piso {i}", d) for i,d in enumerate([
+        "2026-10-04","2026-11-04","2026-12-04","2027-01-04","2027-02-03","2027-03-06","2027-04-06","2027-05-04","2027-06-04"
+    ], start=1)],
+    "FASE3": [(f"Piso {i}", d) for i,d in enumerate([
+        "2026-11-04","2026-12-04","2027-01-04","2027-02-03","2027-03-06","2027-04-06","2027-05-04","2027-06-04","2027-07-04"
+    ], start=1)],
+    "FASE4": [(f"Piso {i}", d) for i,d in enumerate([
+        "2026-12-04","2027-01-04","2027-02-03","2027-03-06","2027-04-06","2027-05-04","2027-06-04","2027-07-04","2027-08-02"
+    ], start=1)],
 }
 
-def build_gantt_df(path, phases, review_date=None):
-    """Construye Gantt y calcula atraso dinámico según la fecha de revisión.
+def _last_business_day_same_month(start):
+    """Último lunes-viernes del mes de `start`."""
+    start = pd.Timestamp(start).normalize()
+    month_end = start + pd.offsets.MonthEnd(0)
+    while month_end.weekday() >= 5:  # 5=sábado, 6=domingo
+        month_end -= pd.Timedelta(days=1)
+    return month_end.normalize()
 
-    Regla de atraso:
+def build_gantt_df(path, phases, review_date=None):
+    """Construye la Gantt mensual y calcula atraso dinámico.
+
+    Alternativa 2:
+    - Cada piso termina el último día hábil del mismo mes en que inicia.
+    - Orden fijo por fase y piso.
     - 100% completado: 0 días de atraso.
-    - Actividad incompleta antes o en su término planificado: 0 días.
-    - Actividad incompleta después del término planificado: días calendario transcurridos.
+    - Incompleto después del término planificado: atraso en días calendario.
     """
     if review_date is None:
         try:
@@ -823,17 +842,18 @@ def build_gantt_df(path, phases, review_date=None):
                     floor_progress[int(float(rr["Piso"]))] = float(rr["Avance (%)"])
                 except Exception:
                     pass
-        for floor_name, start_txt, days in GANTT_PLAN[ph]:
+        for floor_name, start_txt in GANTT_PLAN[ph]:
             piso_num = int(floor_name.split()[-1])
-            start = pd.to_datetime(start_txt)
-            finish = start + pd.Timedelta(days=int(days))
+            start = pd.to_datetime(start_txt).normalize()
+            finish = _last_business_day_same_month(start)
+            business_days = len(pd.bdate_range(start=start, end=finish))
             progress = round(floor_progress.get(piso_num,0.0),1)
-            delay_days = 0 if progress >= 100 else max(0, int((review_date - finish.normalize()).days))
+            delay_days = 0 if progress >= 100 else max(0, int((review_date - finish).days))
             if progress >= 100:
                 schedule_status = "Completado"
             elif delay_days > 0:
                 schedule_status = "Atrasado"
-            elif review_date < start.normalize():
+            elif review_date < start:
                 schedule_status = "No iniciado"
             else:
                 schedule_status = "En plazo"
@@ -841,7 +861,7 @@ def build_gantt_df(path, phases, review_date=None):
                 "Fase": ph.replace("FASE","Fase "), "Piso": floor_name,
                 "Tarea": f'{ph.replace("FASE","Fase ")} · {floor_name}',
                 "Inicio": start, "Término": finish,
-                "Días": int(days), "Progreso (%)": progress,
+                "Días": int(business_days), "Progreso (%)": progress,
                 "Días atraso": delay_days, "Estado plazo": schedule_status
             })
     return pd.DataFrame(rows)
@@ -1483,7 +1503,7 @@ with hlogo:
 with htitle:
     st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO 211</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="sf-sub">Panel de control profesional · v40 recuperación auditada · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
+    f'<div class="sf-sub">Panel de control profesional · v41 recuperación auditada · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
     unsafe_allow_html=True,
 )
 
@@ -2087,7 +2107,7 @@ elif page == "📅 Avance semanal":
 
 elif page == "📅 Carta Gantt":
     st.markdown('<div class="section">CARTA GANTT · PROGRAMA OFICIAL SAN FRANCISCO 211</div>', unsafe_allow_html=True)
-    st.caption("Fechas verificadas contra Libro2.xlsx: inicio del proyecto 01-06-2026. El progreso se actualiza desde la base online.")
+    st.caption("Alternativa 2: cada piso termina el último día hábil del mismo mes en que inicia. El progreso se actualiza desde la base online.")
 
     cg1, cg2 = st.columns([2,1])
     with cg1:
@@ -2183,47 +2203,46 @@ elif page == "⚠️ Ruta crítica":
             st.plotly_chart(figw,use_container_width=True,config={'displayModeBar':False})
         else: st.info('Sin historial semanal')
 
-    left,right=st.columns([1.08,1.55], gap='medium')
     selected_phases=allowed_phases()
-    with left:
-        st.markdown('<div class="route-panel"><div class="route-panel-title">RUTA CRÍTICA ACTUALIZADA</div>',unsafe_allow_html=True)
-        rdf=route_activity_summary(st.session_state.workbook_path, selected_phases)
-        st.markdown(render_route_activity_html(rdf), unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with right:
-        st.markdown('<div class="route-panel"><div class="route-panel-title">CARTA GANTT – PROGRAMA ACTUALIZADO</div>',unsafe_allow_html=True)
-        try:
-            from zoneinfo import ZoneInfo
-            route_review_date=pd.Timestamp.now(tz=ZoneInfo('America/Santiago')).date()
-        except Exception: route_review_date=pd.Timestamp.today().date()
-        gdf=build_gantt_df(st.session_state.workbook_path, selected_phases, review_date=route_review_date)
-        if not gdf.empty:
-            def gantt_state(row):
-                p=float(row['Progreso (%)'])
-                if p>=100: return 'Completado (100%)'
-                if p>0 and row['Días atraso']<=0: return 'En progreso'
-                if row['Días atraso']>0: return 'En riesgo'
-                return 'No iniciado (0%)'
-            gdf['Estado visual']=gdf.apply(gantt_state,axis=1)
-            cmap={'Completado (100%)':'#1f8f3a','En progreso':'#7bc96f','En riesgo':'#f6bf26','No iniciado (0%)':'#c9c9c9'}
-            # Orden fijo y correlativo: Fase 1 Piso 1-9, luego Fase 2, Fase 3 y Fase 4.
-            phase_rank={'Fase 1':1,'Fase 2':2,'Fase 3':3,'Fase 4':4}
-            gdf['Piso_num']=gdf['Piso'].str.extract(r'(\d+)').astype(int)
-            gdf['Fase_num']=gdf['Fase'].map(phase_rank).fillna(99).astype(int)
-            gdf=gdf.sort_values(['Fase_num','Piso_num'],kind='stable').reset_index(drop=True)
-            gdf['Etiqueta']=gdf.apply(lambda r: f"{r['Fase']} · Piso {int(r['Piso_num'])}   |   {r['Inicio'].strftime('%d-%m-%Y')} → {r['Término'].strftime('%d-%m-%Y')}",axis=1)
-            category_order=gdf['Etiqueta'].tolist()
-            fig=px.timeline(gdf,x_start='Inicio',x_end='Término',y='Etiqueta',color='Estado visual',text='Progreso (%)',color_discrete_map=cmap,hover_data={'Fase':True,'Piso':True,'Inicio':'|%d-%m-%Y','Término':'|%d-%m-%Y','Días':True,'Días atraso':True,'Estado plazo':True})
-            fig.update_traces(texttemplate='%{text:.0f}%',textposition='outside')
-            fig.update_yaxes(title=None,tickfont=dict(size=9),categoryorder='array',categoryarray=category_order,autorange='reversed',tickmode='array',tickvals=category_order,ticktext=category_order)
-            fig.update_xaxes(title=None,tickformat='%d-%m-%Y',side='top',gridcolor='#e5e7eb')
-            fig.add_vline(x=pd.Timestamp(route_review_date).timestamp()*1000,line_color='#e11d1d',line_dash='dash',line_width=1.5)
-            fig.update_layout(height=max(980, 27*len(gdf)+90),margin=dict(l=0,r=8,t=45,b=8),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
-            st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
-            delayed=int((gdf['Días atraso']>0).sum()); max_delay=int(gdf['Días atraso'].max()) if len(gdf) else 0
-            m1,m2,m3=st.columns(3); m1.metric('HOY / revisión',pd.Timestamp(route_review_date).strftime('%d-%m-%Y')); m2.metric('Actividades atrasadas',delayed); m3.metric('Mayor atraso',f'{max_delay} días')
-        else: st.warning('Sin datos para la Carta Gantt.')
-        st.markdown('</div>',unsafe_allow_html=True)
+    # Alternativa 2: paneles apilados, cada uno a todo el ancho disponible.
+    st.markdown('<div class="route-panel"><div class="route-panel-title">RUTA CRÍTICA ACTUALIZADA</div>',unsafe_allow_html=True)
+    rdf=route_activity_summary(st.session_state.workbook_path, selected_phases)
+    st.markdown(render_route_activity_html(rdf), unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="route-panel"><div class="route-panel-title">CARTA GANTT – PROGRAMA ACTUALIZADO</div>',unsafe_allow_html=True)
+    try:
+        from zoneinfo import ZoneInfo
+        route_review_date=pd.Timestamp.now(tz=ZoneInfo('America/Santiago')).date()
+    except Exception: route_review_date=pd.Timestamp.today().date()
+    gdf=build_gantt_df(st.session_state.workbook_path, selected_phases, review_date=route_review_date)
+    if not gdf.empty:
+        def gantt_state(row):
+            p=float(row['Progreso (%)'])
+            if p>=100: return 'Completado (100%)'
+            if p>0 and row['Días atraso']<=0: return 'En progreso'
+            if row['Días atraso']>0: return 'En riesgo'
+            return 'No iniciado (0%)'
+        gdf['Estado visual']=gdf.apply(gantt_state,axis=1)
+        cmap={'Completado (100%)':'#1f8f3a','En progreso':'#7bc96f','En riesgo':'#f6bf26','No iniciado (0%)':'#c9c9c9'}
+        # Orden fijo y correlativo: Fase 1 Piso 1-9, luego Fase 2, Fase 3 y Fase 4.
+        phase_rank={'Fase 1':1,'Fase 2':2,'Fase 3':3,'Fase 4':4}
+        gdf['Piso_num']=gdf['Piso'].str.extract(r'(\d+)').astype(int)
+        gdf['Fase_num']=gdf['Fase'].map(phase_rank).fillna(99).astype(int)
+        gdf=gdf.sort_values(['Fase_num','Piso_num'],kind='stable').reset_index(drop=True)
+        gdf['Etiqueta']=gdf.apply(lambda r: f"{r['Fase']} · Piso {int(r['Piso_num'])}   |   {r['Inicio'].strftime('%d-%m-%Y')} → {r['Término'].strftime('%d-%m-%Y')}",axis=1)
+        category_order=gdf['Etiqueta'].tolist()
+        fig=px.timeline(gdf,x_start='Inicio',x_end='Término',y='Etiqueta',color='Estado visual',text='Progreso (%)',color_discrete_map=cmap,hover_data={'Fase':True,'Piso':True,'Inicio':'|%d-%m-%Y','Término':'|%d-%m-%Y','Días':True,'Días atraso':True,'Estado plazo':True})
+        fig.update_traces(texttemplate='%{text:.0f}%',textposition='outside')
+        fig.update_yaxes(title=None,tickfont=dict(size=9),categoryorder='array',categoryarray=category_order,autorange='reversed',tickmode='array',tickvals=category_order,ticktext=category_order)
+        fig.update_xaxes(title=None,tickformat='%d-%m-%Y',side='top',gridcolor='#e5e7eb')
+        fig.add_vline(x=pd.Timestamp(route_review_date).timestamp()*1000,line_color='#e11d1d',line_dash='dash',line_width=1.5)
+        fig.update_layout(height=max(980, 27*len(gdf)+90),margin=dict(l=0,r=8,t=45,b=8),legend=dict(orientation='h',y=-.07,x=0,font=dict(size=9)),plot_bgcolor='white',paper_bgcolor='white')
+        st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
+        delayed=int((gdf['Días atraso']>0).sum()); max_delay=int(gdf['Días atraso'].max()) if len(gdf) else 0
+        m1,m2,m3=st.columns(3); m1.metric('HOY / revisión',pd.Timestamp(route_review_date).strftime('%d-%m-%Y')); m2.metric('Actividades atrasadas',delayed); m3.metric('Mayor atraso',f'{max_delay} días')
+    else: st.warning('Sin datos para la Carta Gantt.')
+    st.markdown('</div>',unsafe_allow_html=True)
 
 elif page == "⬆️ Importar / Exportar":
     if not can_access_admin_tools():
@@ -2312,7 +2331,7 @@ elif page == "⬆️ Importar / Exportar":
     _audit_rows = db_phase_update_history()
     if _audit_rows:
         _audit_df=pd.DataFrame(_audit_rows)
-        st.success(f"Historial detallado v40 activo: {len(_audit_df):,} cambios auditables.".replace(",","."))
+        st.success(f"Historial detallado v41 activo: {len(_audit_df):,} cambios auditables.".replace(",","."))
         st.download_button(
             "🧾 Descargar historial detallado de cambios (CSV)",
             data=_audit_df.to_csv(index=False).encode("utf-8-sig"),
@@ -2322,7 +2341,7 @@ elif page == "⬆️ Importar / Exportar":
         )
     else:
         st.info(
-            "El historial inmutable empieza a poblarse desde la v40. Si aún no creaste las tablas nuevas en Supabase, "
+            "El historial inmutable empieza a poblarse desde la v41. Si aún no creaste las tablas nuevas en Supabase, "
             "ejecuta el archivo supabase_setup.sql incluido en esta versión. El autoguardado actual seguirá funcionando igual."
         )
 

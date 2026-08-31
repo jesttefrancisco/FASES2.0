@@ -176,3 +176,10 @@ Además:
 - El histórico semanal y la auditoría también usan lectura paginada.
 - Se muestra un diagnóstico con el total de registros online cargados.
 - No requiere volver a ingresar los avances del sábado: si existen en `phase_updates`, se aplican automáticamente.
+
+
+## v41 – Alternativa 2
+- Ruta Crítica y Carta Gantt se muestran una debajo de la otra, a todo el ancho.
+- Orden fijo: Fase 1 Piso 1–9, Fase 2 Piso 1–9, Fase 3 Piso 1–9, Fase 4 Piso 1–9.
+- Cada piso termina el último día hábil del mismo mes de inicio.
+- Fase 1 Piso 1 inicia 01-07-2026.
