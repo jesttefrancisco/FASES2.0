@@ -183,3 +183,10 @@ Además:
 - Orden fijo: Fase 1 Piso 1–9, Fase 2 Piso 1–9, Fase 3 Piso 1–9, Fase 4 Piso 1–9.
 - Cada piso termina el último día hábil del mismo mes de inicio.
 - Fase 1 Piso 1 inicia 01-07-2026.
+
+## v42 - Avance por Departamento
+- Nueva pestaña `🏙️ Avance por Departamento`.
+- Elevación dinámica por Torre y Piso.
+- Cada departamento muestra F1, F2, F3 y F4 calculadas desde Supabase.
+- Semáforo: verde 100%, amarillo 50-99.9%, naranjo 0-49.9%.
+- No modifica ni duplica los avances existentes.

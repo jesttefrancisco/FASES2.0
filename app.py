@@ -1457,6 +1457,7 @@ with st.sidebar:
             "📅 Carta Gantt",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
+            "🏙️ Avance por Departamento",
             "⚠️ Ruta crítica",
             "⬆️ Importar / Exportar",
         ]
@@ -1467,6 +1468,7 @@ with st.sidebar:
             "📅 Carta Gantt",
             "🧱 Actualizar avances",
             "🏢 Fases completas",
+            "🏙️ Avance por Departamento",
         ]
     elif role == "Visor":
         menu_options = [
@@ -1475,6 +1477,7 @@ with st.sidebar:
             "📈 Gráficos por fase",
             "📅 Carta Gantt",
             "🏢 Fases completas",
+            "🏙️ Avance por Departamento",
             "⚠️ Ruta crítica",
         ]
     else:
@@ -2094,6 +2097,97 @@ elif page == "🏢 Fases completas":
             "No es necesario presionar Guardar. Cada celda modificada se autoguarda en la base online, "
             "se verifica y luego se recalculan Dashboard, Ruta Crítica y Gantt."
         )
+
+elif page == "🏙️ Avance por Departamento":
+    st.markdown('<div class="section">AVANCE POR DEPARTAMENTO · ELEVACIÓN DEL EDIFICIO</div>', unsafe_allow_html=True)
+    st.caption(
+        "Vista por Torre y Piso basada en la elevación del proyecto. Debajo de cada departamento se muestra "
+        "el promedio real de Fase 1, Fase 2, Fase 3 y Fase 4, calculado desde las mismas partidas guardadas en Supabase."
+    )
+
+    # Construir una única base por Torre + Piso + Departamento con el promedio real de cada fase.
+    phase_frames = []
+    for _phase in ["FASE1", "FASE2", "FASE3", "FASE4"]:
+        _df = phase_numeric_percent_df(st.session_state.workbook_path, _phase).copy()
+        if _df.empty:
+            continue
+        _df["Piso"] = pd.to_numeric(_df["Piso"], errors="coerce")
+        _df["Departamento"] = pd.to_numeric(_df["Departamento"], errors="coerce")
+        _df = _df.dropna(subset=["Piso", "Torre", "Departamento"])
+        _df["Piso"] = _df["Piso"].astype(int)
+        _df["Departamento"] = _df["Departamento"].astype(int)
+        # Si la planilla trae filas repetidas, consolidar el departamento antes de dibujarlo.
+        _g = (_df.groupby(["Torre", "Piso", "Departamento"], as_index=False)["% Avance Real Depto"]
+              .mean()
+              .rename(columns={"% Avance Real Depto": _phase}))
+        phase_frames.append(_g)
+
+    if not phase_frames:
+        st.warning("No hay departamentos disponibles para mostrar.")
+    else:
+        from functools import reduce
+        _all = reduce(
+            lambda left, right: pd.merge(left, right, on=["Torre","Piso","Departamento"], how="outer"),
+            phase_frames
+        )
+        for _phase in ["FASE1","FASE2","FASE3","FASE4"]:
+            if _phase not in _all.columns:
+                _all[_phase] = 0.0
+            _all[_phase] = pd.to_numeric(_all[_phase], errors="coerce").fillna(0.0).clip(0,100)
+        _all["Torre"] = _all["Torre"].astype(str).str.strip().str.upper()
+
+        def _pct_style(v):
+            v = float(v or 0)
+            if v >= 99.95:
+                return "#16a34a", "#ffffff"
+            if v >= 50:
+                return "#facc15", "#111827"
+            return "#f97316", "#ffffff"
+
+        st.markdown("""
+        <style>
+        .elev-tower {background:#f4f7fb;border:1px solid #dbe3ee;border-radius:12px;padding:12px 12px 16px;margin:8px 0 22px;}
+        .elev-title {font-size:22px;font-weight:800;color:#17324d;margin:0 0 10px 2px;}
+        .elev-floor {display:grid;grid-template-columns:72px 1fr;gap:8px;align-items:stretch;margin:7px 0;}
+        .elev-floor-label {background:#263746;color:white;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;min-height:88px;}
+        .elev-depts {display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px;}
+        .elev-dept {background:white;border:1px solid #cfd8e3;border-radius:7px;padding:7px;box-shadow:0 1px 2px rgba(0,0,0,.05);min-width:0;}
+        .elev-dept-name {font-size:13px;font-weight:800;text-align:center;color:#1f2937;border-bottom:1px solid #e5e7eb;padding-bottom:5px;margin-bottom:5px;}
+        .elev-phases {display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+        .elev-phase {border-radius:5px;padding:4px 2px;text-align:center;font-size:10px;font-weight:800;white-space:nowrap;}
+        @media (max-width: 900px){.elev-depts{grid-template-columns:repeat(3,minmax(105px,1fr));}}
+        </style>
+        """, unsafe_allow_html=True)
+
+        _towers = sorted([t for t in _all["Torre"].dropna().unique().tolist() if t and t != "NAN"])
+        _choice = st.selectbox("Torre", ["Todas"] + _towers, key="elev_tower_filter")
+        _show_towers = _towers if _choice == "Todas" else [_choice]
+
+        # Resumen superior por torre usando el mismo universo de departamentos visible.
+        _summary_cols = st.columns(max(1, min(4, len(_show_towers))))
+        for _i, _tower in enumerate(_show_towers):
+            _td = _all[_all["Torre"] == _tower]
+            _overall = float(_td[["FASE1","FASE2","FASE3","FASE4"]].mean(axis=1).mean()) if len(_td) else 0.0
+            _summary_cols[_i % len(_summary_cols)].metric(f"Torre {_tower}", f"{_overall:.1f}%", f"{len(_td)} deptos")
+
+        for _tower in _show_towers:
+            _td = _all[_all["Torre"] == _tower].copy()
+            html = [f'<div class="elev-tower"><div class="elev-title">TORRE {_tower}</div>']
+            for _floor in sorted(_td["Piso"].dropna().astype(int).unique().tolist(), reverse=True):
+                _fd = _td[_td["Piso"] == _floor].sort_values("Departamento")
+                html.append(f'<div class="elev-floor"><div class="elev-floor-label">PISO {_floor}</div><div class="elev-depts">')
+                for _, _r in _fd.iterrows():
+                    html.append(f'<div class="elev-dept"><div class="elev-dept-name">DEPTO {int(_r["Departamento"])}</div><div class="elev-phases">')
+                    for _ph, _lab in [("FASE1","F1"),("FASE2","F2"),("FASE3","F3"),("FASE4","F4")]:
+                        _v = float(_r[_ph])
+                        _bg, _fg = _pct_style(_v)
+                        html.append(f'<div class="elev-phase" style="background:{_bg};color:{_fg}">{_lab} { _v:.1f}%</div>')
+                    html.append('</div></div>')
+                html.append('</div></div>')
+            html.append('</div>')
+            st.markdown(''.join(html), unsafe_allow_html=True)
+
+        st.caption("Semáforo: 🟢 100% · 🟡 50%–99,9% · 🟠 0%–49,9%. Los valores se recalculan desde Supabase al actualizar la página.")
 
 elif page == "📋 Resumen":
     st.caption("El RESUMEN se convierte automáticamente a porcentaje según la fase.")
