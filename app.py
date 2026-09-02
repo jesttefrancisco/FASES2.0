@@ -118,7 +118,7 @@ def _db_select_all(table_name, select="*", order_by=None, desc=False, page_size=
         return []
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def db_phase_updates():
     # FUENTE PERSISTENTE PRINCIPAL: nunca leerla sin paginación.
     rows = _db_select_all(
@@ -408,7 +408,7 @@ def show_save_status():
     else:
         st.error(detail + f" · {info.get('message','')}")
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def db_weekly_history():
     # También se pagina para que el histórico siga siendo completo con el tiempo.
     return _db_select_all(
@@ -419,8 +419,9 @@ def db_weekly_history():
         page_size=1000,
     )
 
+@st.cache_data(ttl=600, show_spinner=False)
 def db_latest_weekly_snapshot():
-    """Devuelve el último corte oficial directamente desde Supabase, sin cache.
+    """Devuelve el último corte oficial desde Supabase con caché breve.
     Esta función es la fuente maestra para Dashboard, Ruta Crítica y Gantt.
     """
     client = get_supabase()
@@ -603,7 +604,7 @@ def get_sheet_names(path):
     wb.close()
     return names
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_phase(path, phase):
     wb = load_workbook(path, read_only=False, data_only=False)
     ws = wb[phase]
@@ -1633,7 +1634,7 @@ with hlogo:
 with htitle:
     st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO 211</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="sf-sub">Panel de control profesional · v50 navegación optimizada estable · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
+    f'<div class="sf-sub">Panel de control profesional · v51 navegación rápida con caché persistente · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
     unsafe_allow_html=True,
 )
 

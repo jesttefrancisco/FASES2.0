@@ -1,1 +1,1 @@
-v50 - Navegación optimizada estable
+v51 - Navegación rápida con caché persistente

@@ -223,3 +223,11 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - No modifica autenticación ni sesión.
 - La caché de avances se invalida automáticamente al guardar o sincronizar.
 - Evita vaciar toda la caché al navegar entre pestañas.
+
+
+## v51 - Navegación rápida con caché persistente
+- La lectura completa de phase_updates queda en caché 10 minutos.
+- Las hojas FASE1-FASE4 procesadas quedan en caché 10 minutos.
+- El último corte semanal también queda en caché 10 minutos.
+- Guardar avances y Sincronizar datos siguen invalidando la caché para mostrar información nueva.
+- Objetivo: evitar reconstruir 3.000+ registros en cada cambio de pestaña.
