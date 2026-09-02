@@ -2457,11 +2457,20 @@ elif page == "⬆️ Importar / Exportar":
 
     uploaded=st.file_uploader("Cargar una nueva versión de CONTROL_FASES_SFCO211.xlsx",type=["xlsx"])
     if uploaded is not None:
-        with open(st.session_state.workbook_path,"wb") as f:
-            f.write(uploaded.getbuffer())
-        load_phase.clear(); get_sheet_names.clear()
-        st.success("Archivo cargado.")
-        st.rerun()
+        # Evita reprocesar el mismo archivo en cada rerun de Streamlit.
+        _uploaded_bytes = uploaded.getvalue()
+        _uploaded_signature = f"{uploaded.name}:{len(_uploaded_bytes)}:{hash(_uploaded_bytes)}"
+        if st.session_state.get("last_uploaded_workbook_signature") != _uploaded_signature:
+            with open(st.session_state.workbook_path,"wb") as f:
+                f.write(_uploaded_bytes)
+            # get_sheet_names sí usa st.cache_data; load_phase NO está cacheada.
+            get_sheet_names.clear()
+            st.session_state["last_uploaded_workbook_signature"] = _uploaded_signature
+            st.session_state["uploaded_workbook_ok"] = True
+            st.success("✅ Archivo cargado correctamente. Ya puedes confirmar la actualización hacia Supabase.")
+            st.rerun()
+        elif st.session_state.get("uploaded_workbook_ok"):
+            st.success("✅ Archivo cargado correctamente. Ya puedes confirmar la actualización hacia Supabase.")
 
     st.markdown("### 🔄 Convertir este Excel en la nueva base oficial de Supabase")
     st.caption(

@@ -208,3 +208,10 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - La validación del Excel se ejecuta solo al pulsar el botón.
 - El botón queda deshabilitado hasta marcar la confirmación.
 - El proceso sigue usando upsert y verificación contra Supabase; no suma ni duplica porcentajes.
+
+
+## v48 - Corrección carga Excel
+- Corrige el `AttributeError` provocado por `load_phase.clear()`: `load_phase` no usa `st.cache_data`.
+- Mantiene `get_sheet_names.clear()` porque esa función sí está cacheada.
+- Evita reprocesar el mismo archivo tras `st.rerun()`, usando una firma del archivo cargado en `session_state`.
+- Tras cargar el Excel, se muestra la confirmación y el botón Excel → Supabase sin alterar la lógica de upsert/verificación.

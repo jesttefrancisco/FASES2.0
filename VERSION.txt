@@ -1,1 +1,1 @@
-v47 - Botón Excel → Supabase siempre visible antes de validación
+v48 - Corrige carga Excel: elimina load_phase.clear y evita rerun infinito
