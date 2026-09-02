@@ -215,3 +215,10 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - Mantiene `get_sheet_names.clear()` porque esa función sí está cacheada.
 - Evita reprocesar el mismo archivo tras `st.rerun()`, usando una firma del archivo cargado en `session_state`.
 - Tras cargar el Excel, se muestra la confirmación y el botón Excel → Supabase sin alterar la lógica de upsert/verificación.
+
+
+## v49 - Navegación rápida
+- Supabase phase_updates se reutiliza durante la navegación y solo se invalida al guardar/sincronizar.
+- Las hojas FASE1–FASE4 del Excel se cachean por fecha de modificación.
+- Los resúmenes F1–F4 se recalculan solo cuando cambia el Excel o la revisión online.
+- Se evita limpiar todo st.cache_data al cambiar/guardar; se invalidan únicamente los datos necesarios.

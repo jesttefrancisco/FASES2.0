@@ -1,1 +1,1 @@
-v48 - Corrige carga Excel: elimina load_phase.clear y evita rerun infinito
+v49 - Navegación rápida: caché selectiva de Supabase y Excel; pestañas más ágiles.
