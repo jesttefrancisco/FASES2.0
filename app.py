@@ -740,8 +740,11 @@ def phase_summary(path, phase):
             sum(floor_results) / len(official_floors)
         )
 
+    # Mantener un decimal. Antes round() sin ndigits redondeaba la fase a un
+    # entero completo (ej. 3.2% -> 3%), por lo que avances pequeños parecían
+    # no aumentar en Dashboard, especialmente en FASE3.
     return float(round(
-        sum(activity_results) / len(activity_results)
+        sum(activity_results) / len(activity_results), 1
     )) if activity_results else 0.0
 
 def phase_by_floor(path, phase):

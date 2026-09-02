@@ -231,3 +231,10 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - El último corte semanal también queda en caché 10 minutos.
 - Guardar avances y Sincronizar datos siguen invalidando la caché para mostrar información nueva.
 - Objetivo: evitar reconstruir 3.000+ registros en cada cambio de pestaña.
+
+
+## v53 - Corrección porcentaje general de fases
+- Basada directamente en v51, que el usuario confirmó funcionando.
+- Corrige `phase_summary`: antes el resultado se redondeaba a número entero.
+- Ahora conserva 1 decimal, por lo que avances pequeños de FASE3 se reflejan inmediatamente.
+- No modifica Supabase, autenticación, caché ni estructura de avances.
