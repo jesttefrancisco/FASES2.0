@@ -202,3 +202,9 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - No se vacía `phase_updates` antes de escribir; primero se guarda todo y luego se verifica contra una lectura paginada completa.
 - Las celdas vacías de partidas se consideran 0% al convertir el Excel en base oficial.
 - `updated_by` queda identificado como `RECUPERACION EXCEL · <usuario>`.
+
+## v47 - Sincronización Excel → Supabase visible
+- La confirmación y el botón de actualización aparecen inmediatamente debajo del bloque de recuperación.
+- La validación del Excel se ejecuta solo al pulsar el botón.
+- El botón queda deshabilitado hasta marcar la confirmación.
+- El proceso sigue usando upsert y verificación contra Supabase; no suma ni duplica porcentajes.

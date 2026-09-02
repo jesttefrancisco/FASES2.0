@@ -2470,39 +2470,48 @@ elif page == "⬆️ Importar / Exportar":
         "Se usa upsert por Fase + fila Excel + partida, por lo que no crea duplicados."
     )
 
-    try:
-        _preview_payload, _preview_counts = workbook_recovery_payload(
-            st.session_state.workbook_path,
-            st.session_state.get("user_name", "Administrador")
-        )
-        _pc = st.columns(5)
-        for _i, _p in enumerate(PHASES):
-            _pc[_i].metric(_p.replace("FASE", "Fase "), f"{_preview_counts.get(_p,0):,}".replace(",","."))
-        _pc[4].metric("Total celdas", f"{len(_preview_payload):,}".replace(",","."))
-        st.success("Excel validado: estructura FASE1–FASE4 lista para sincronizar.")
-        _confirm_recovery = st.checkbox(
-            "Confirmo que este Excel es la nueva base oficial de recuperación y quiero sobrescribir los porcentajes correspondientes en Supabase.",
-            key="confirm_recovery_to_supabase"
-        )
-        if st.button(
-            "🔄 SINCRONIZAR EXCEL → SUPABASE",
-            type="primary",
-            use_container_width=True,
-            disabled=not _confirm_recovery,
-        ):
-            with st.spinner("Actualizando y verificando la base online…"):
+    # El control de seguridad se muestra SIEMPRE. La validación pesada del Excel
+    # se ejecuta solo cuando el Administrador decide sincronizar.
+    st.warning("Antes de continuar, verifica que el archivo cargado sea el Excel de recuperación modificado que quieres dejar como base oficial.")
+    _confirm_recovery = st.checkbox(
+        "✅ Confirmo que quiero reemplazar los avances de Supabase con los porcentajes de ESTE Excel.",
+        key="confirm_recovery_to_supabase_v47"
+    )
+    _sync_clicked = st.button(
+        "🔄 ACTUALIZAR BASE SUPABASE CON ESTE EXCEL",
+        type="primary",
+        use_container_width=True,
+        disabled=not _confirm_recovery,
+        key="sync_recovery_to_supabase_v47",
+    )
+    st.caption("El proceso usa upsert: no suma porcentajes ni duplica registros. El valor del Excel pasa a ser el valor oficial de cada partida coincidente.")
+
+    if _sync_clicked:
+        try:
+            with st.spinner("1/3 Validando FASE1–FASE4 del Excel…"):
+                _preview_payload, _preview_counts = workbook_recovery_payload(
+                    st.session_state.workbook_path,
+                    st.session_state.get("user_name", "Administrador")
+                )
+            st.success(
+                "Excel validado: "
+                + " · ".join([f"{_p}: {_preview_counts.get(_p,0):,}".replace(",", ".") for _p in PHASES])
+                + f" · Total: {len(_preview_payload):,}".replace(",", ".")
+            )
+            with st.spinner("2/3 Actualizando Supabase y 3/3 verificando los valores guardados…"):
                 _ok, _msg, _counts = db_replace_from_recovery_workbook(
                     st.session_state.workbook_path,
                     st.session_state.get("user_name", "Administrador")
                 )
             if _ok:
                 st.session_state["recovery_sync_message"] = _msg
+                st.success("✅ BASE SUPABASE ACTUALIZADA CORRECTAMENTE")
                 st.success(_msg)
-                st.info("La aplicación ya puede reconstruir Dashboard, Fases completas, Ruta Crítica y Avance por Departamento desde estos valores oficiales.")
+                st.info("Ahora presiona 'Sincronizar datos' arriba o vuelve al Dashboard para ver los porcentajes oficiales reconstruidos desde este Excel.")
             else:
                 st.error(f"No se completó la sincronización: {_msg}")
-    except Exception as _e:
-        st.error(f"El Excel actual no puede usarse todavía como base de recuperación: {_e}")
+        except Exception as _e:
+            st.error(f"El Excel no pudo sincronizarse: {_e}")
 
     st.markdown("### Respaldo de base online")
     online_updates = db_phase_updates()

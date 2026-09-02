@@ -1,1 +1,1 @@
-v46 - Excel modificado como base oficial + sincronización masiva verificada a Supabase
+v47 - Botón Excel → Supabase siempre visible antes de validación
