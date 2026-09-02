@@ -194,3 +194,11 @@ Además:
 
 ## v44
 Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye departamentos 701 a 721. Los avances continúan vinculados por fila/partida a Supabase.
+
+## v46 · Base de recuperación Excel → Supabase
+- Incluye como plantilla oficial el Excel `CONTROL_FASES_SFCO211_RECUPERADO_BASE_ONLINE.xlsx` modificado por el usuario.
+- En **Importar / Exportar** el Administrador puede validar y sincronizar todas las partidas FASE1–FASE4 hacia `phase_updates`.
+- La sincronización usa `upsert` con la clave única `(phase, excel_row, activity)`, por lo que sobrescribe el porcentaje oficial sin duplicar registros.
+- No se vacía `phase_updates` antes de escribir; primero se guarda todo y luego se verifica contra una lectura paginada completa.
+- Las celdas vacías de partidas se consideran 0% al convertir el Excel en base oficial.
+- `updated_by` queda identificado como `RECUPERACION EXCEL · <usuario>`.

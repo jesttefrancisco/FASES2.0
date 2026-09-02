@@ -1,1 +1,1 @@
-v45 - Avance por Departamento: mostrar solo porcentaje promedio final
+v46 - Excel modificado como base oficial + sincronización masiva verificada a Supabase

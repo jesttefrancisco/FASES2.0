@@ -249,6 +249,115 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
     except Exception as e:
         return False, str(e)
 
+
+def workbook_recovery_payload(path, username):
+    """Convierte FASE1–FASE4 del Excel actual en registros 0–100 para phase_updates.
+
+    Se usan las mismas claves persistentes de la aplicación:
+    (phase, excel_row, activity). No se incluye la columna calculada
+    "% Avance Real Depto" porque se recalcula desde las partidas.
+    """
+    wb = load_workbook(path, read_only=True, data_only=False)
+    payload = []
+    counts = {}
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        for phase in PHASES:
+            if phase not in wb.sheetnames:
+                raise ValueError(f"El archivo no contiene la hoja {phase}.")
+            ws = wb[phase]
+            headers = [c.value for c in ws[1]]
+            if "% Avance Real Depto" not in headers:
+                raise ValueError(f"{phase}: falta la columna % Avance Real Depto.")
+            progress_idx = headers.index("% Avance Real Depto") + 1
+            activity_cols = []
+            for col_idx in range(5, progress_idx):
+                activity = headers[col_idx - 1]
+                if activity is not None and str(activity).strip():
+                    activity_cols.append((col_idx, str(activity)))
+
+            phase_count = 0
+            for excel_row in range(2, ws.max_row + 1):
+                # Solo filas reales de departamentos/sectores: Fase, Piso, Torre y Departamento.
+                id_values = [ws.cell(excel_row, c).value for c in range(1, 5)]
+                if not any(v is not None and str(v).strip() != "" for v in id_values):
+                    continue
+                if ws.cell(excel_row, 4).value in (None, ""):
+                    continue
+
+                for col_idx, activity in activity_cols:
+                    raw = ws.cell(excel_row, col_idx).value
+                    # En una base de recuperación, una celda vacía se interpreta como 0%.
+                    pct = to_percent(0 if raw in (None, "") else raw, phase)
+                    pct = max(0.0, min(100.0, float(pct)))
+                    payload.append({
+                        "phase": phase,
+                        "excel_row": int(excel_row),
+                        "activity": activity,
+                        "percent": round(pct, 6),
+                        "updated_by": f"RECUPERACION EXCEL · {username}",
+                        "updated_at": stamp,
+                    })
+                    phase_count += 1
+            counts[phase] = phase_count
+    finally:
+        wb.close()
+    return payload, counts
+
+
+def db_replace_from_recovery_workbook(path, username):
+    """Sobrescribe/crea el estado oficial de cada celda del Excel en Supabase.
+
+    No borra la tabla antes de escribir: así una interrupción de red no puede dejar
+    phase_updates vacía. Las claves existentes se sobrescriben por la restricción
+    única (phase, excel_row, activity); por tanto no se duplican registros.
+    """
+    client = get_supabase()
+    if client is None:
+        return False, st.session_state.get("supabase_error", "Supabase no está disponible."), {}
+
+    try:
+        payload, counts = workbook_recovery_payload(path, username)
+        if not payload:
+            return False, "El Excel no contiene partidas válidas para sincronizar.", counts
+
+        # Escribir primero y verificar después. Nunca vaciar la tabla antes del upsert.
+        batch_size = 400
+        for i in range(0, len(payload), batch_size):
+            client.table("phase_updates").upsert(
+                payload[i:i + batch_size],
+                on_conflict="phase,excel_row,activity"
+            ).execute()
+
+        # Verificación completa usando lectura paginada (protección v40+).
+        online = db_phase_updates()
+        online_map = {}
+        for r in online:
+            try:
+                key = (str(r.get("phase")), int(r.get("excel_row")), str(r.get("activity")))
+                online_map[key] = float(r.get("percent", 0))
+            except Exception:
+                continue
+
+        mismatches = []
+        for r in payload:
+            key = (r["phase"], int(r["excel_row"]), r["activity"])
+            db_value = online_map.get(key)
+            if db_value is None or abs(float(db_value) - float(r["percent"])) > 1e-6:
+                mismatches.append((key, r["percent"], db_value))
+                if len(mismatches) >= 10:
+                    break
+
+        if mismatches:
+            return False, (
+                "La carga terminó, pero la verificación encontró diferencias. "
+                f"Primeras diferencias: {mismatches[:3]}"
+            ), counts
+
+        return True, f"Base online sincronizada y verificada: {len(payload)} celdas de avance.", counts
+    except Exception as e:
+        return False, str(e), {}
+
 def set_save_status(ok, message, phase=None, excel_row=None, activity=None):
     st.session_state["last_save_status"] = {
         "ok": bool(ok),
@@ -384,7 +493,7 @@ div[data-testid="stDataFrame"] {font-size:12px;}
 </style>
 """, unsafe_allow_html=True)
 
-APP_VERSION = "v35"
+APP_VERSION = "v46"
 
 # Al cambiar de versión, reemplazar cualquier copia temporal antigua por
 # la plantilla depurada incluida en esta versión. Los avances reales se
@@ -2353,6 +2462,47 @@ elif page == "⬆️ Importar / Exportar":
         load_phase.clear(); get_sheet_names.clear()
         st.success("Archivo cargado.")
         st.rerun()
+
+    st.markdown("### 🔄 Convertir este Excel en la nueva base oficial de Supabase")
+    st.caption(
+        "Esta función toma TODAS las partidas de FASE1, FASE2, FASE3 y FASE4 del Excel actual. "
+        "Los valores del Excel reemplazan los porcentajes de las mismas celdas en phase_updates. "
+        "Se usa upsert por Fase + fila Excel + partida, por lo que no crea duplicados."
+    )
+
+    try:
+        _preview_payload, _preview_counts = workbook_recovery_payload(
+            st.session_state.workbook_path,
+            st.session_state.get("user_name", "Administrador")
+        )
+        _pc = st.columns(5)
+        for _i, _p in enumerate(PHASES):
+            _pc[_i].metric(_p.replace("FASE", "Fase "), f"{_preview_counts.get(_p,0):,}".replace(",","."))
+        _pc[4].metric("Total celdas", f"{len(_preview_payload):,}".replace(",","."))
+        st.success("Excel validado: estructura FASE1–FASE4 lista para sincronizar.")
+        _confirm_recovery = st.checkbox(
+            "Confirmo que este Excel es la nueva base oficial de recuperación y quiero sobrescribir los porcentajes correspondientes en Supabase.",
+            key="confirm_recovery_to_supabase"
+        )
+        if st.button(
+            "🔄 SINCRONIZAR EXCEL → SUPABASE",
+            type="primary",
+            use_container_width=True,
+            disabled=not _confirm_recovery,
+        ):
+            with st.spinner("Actualizando y verificando la base online…"):
+                _ok, _msg, _counts = db_replace_from_recovery_workbook(
+                    st.session_state.workbook_path,
+                    st.session_state.get("user_name", "Administrador")
+                )
+            if _ok:
+                st.session_state["recovery_sync_message"] = _msg
+                st.success(_msg)
+                st.info("La aplicación ya puede reconstruir Dashboard, Fases completas, Ruta Crítica y Avance por Departamento desde estos valores oficiales.")
+            else:
+                st.error(f"No se completó la sincronización: {_msg}")
+    except Exception as _e:
+        st.error(f"El Excel actual no puede usarse todavía como base de recuperación: {_e}")
 
     st.markdown("### Respaldo de base online")
     online_updates = db_phase_updates()
