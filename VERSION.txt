@@ -1,1 +1,1 @@
-v49 - Navegación rápida: caché selectiva de Supabase y Excel; pestañas más ágiles.
+v50 - Navegación optimizada estable

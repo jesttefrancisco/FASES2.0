@@ -118,20 +118,16 @@ def _db_select_all(table_name, select="*", order_by=None, desc=False, page_size=
         return []
 
 
-@st.cache_data(show_spinner=False, ttl=60)
-def _cached_phase_updates():
-    # Una sola lectura paginada por minuto como máximo. Al cambiar de pestaña
-    # Streamlit reutiliza estos datos en vez de volver a consultar Supabase.
-    return _db_select_all(
+@st.cache_data(ttl=20, show_spinner=False)
+def db_phase_updates():
+    # FUENTE PERSISTENTE PRINCIPAL: nunca leerla sin paginación.
+    rows = _db_select_all(
         "phase_updates",
         select="*",
         order_by="id",
         desc=False,
         page_size=1000,
     )
-
-def db_phase_updates():
-    rows = _cached_phase_updates()
     st.session_state["phase_updates_loaded_count"] = len(rows)
     return rows
 
@@ -250,7 +246,12 @@ def db_upsert_phase_update(phase, excel_row, activity, percent, username):
         # Historial inmutable: desde v41 cada cambio queda registrado además del estado actual.
         if old_percent is None or abs(float(old_percent) - float(percent)) > 1e-6:
             db_log_phase_update(phase, excel_row, activity, old_percent, percent, username)
-        invalidate_online_caches()
+        # Invalidar solo los datos que dependen del avance, sin vaciar toda la caché de la app.
+        try:
+            db_phase_updates.clear()
+            load_phase.clear()
+        except Exception:
+            pass
         return True, rows[0].get("updated_at") or payload["updated_at"]
     except Exception as e:
         return False, str(e)
@@ -335,8 +336,12 @@ def db_replace_from_recovery_workbook(path, username):
                 on_conflict="phase,excel_row,activity"
             ).execute()
 
-        # Verificación completa: invalidar la lectura anterior para comprobar lo recién escrito.
-        invalidate_online_caches()
+        # Verificación completa usando lectura paginada (protección v40+).
+        # Se invalida la lectura previa para verificar exactamente lo recién escrito.
+        try:
+            db_phase_updates.clear()
+        except Exception:
+            pass
         online = db_phase_updates()
         online_map = {}
         for r in online:
@@ -361,6 +366,10 @@ def db_replace_from_recovery_workbook(path, username):
                 f"Primeras diferencias: {mismatches[:3]}"
             ), counts
 
+        try:
+            load_phase.clear()
+        except Exception:
+            pass
         return True, f"Base online sincronizada y verificada: {len(payload)} celdas de avance.", counts
     except Exception as e:
         return False, str(e), {}
@@ -399,8 +408,9 @@ def show_save_status():
     else:
         st.error(detail + f" · {info.get('message','')}")
 
-@st.cache_data(show_spinner=False, ttl=120)
-def _cached_weekly_history():
+@st.cache_data(ttl=30, show_spinner=False)
+def db_weekly_history():
+    # También se pagina para que el histórico siga siendo completo con el tiempo.
     return _db_select_all(
         "weekly_history",
         select="*",
@@ -408,29 +418,6 @@ def _cached_weekly_history():
         desc=False,
         page_size=1000,
     )
-
-def db_weekly_history():
-    # Histórico reutilizado entre pestañas; se invalida tras una escritura.
-    return _cached_weekly_history()
-
-def invalidate_online_caches():
-    """Invalida solo cachés de datos online, sin borrar todos los cálculos de la app."""
-    try:
-        _cached_phase_updates.clear()
-    except Exception:
-        pass
-    try:
-        _cached_weekly_history.clear()
-    except Exception:
-        pass
-    try:
-        _cached_phase_summaries.clear()
-    except Exception:
-        pass
-    try:
-        load_weekly_history.clear()
-    except Exception:
-        pass
 
 def db_latest_weekly_snapshot():
     """Devuelve el último corte oficial directamente desde Supabase, sin cache.
@@ -616,10 +603,9 @@ def get_sheet_names(path):
     wb.close()
     return names
 
-@st.cache_data(show_spinner=False)
-def _load_phase_excel(path, file_mtime, phase):
-    """Lee la hoja Excel una sola vez mientras el archivo no cambie."""
-    wb = load_workbook(path, read_only=True, data_only=False)
+@st.cache_data(ttl=20, show_spinner=False)
+def load_phase(path, phase):
+    wb = load_workbook(path, read_only=False, data_only=False)
     ws = wb[phase]
     headers = [c.value for c in ws[1]]
     rows, excel_rows = [], []
@@ -632,16 +618,7 @@ def _load_phase_excel(path, file_mtime, phase):
     wb.close()
     df = pd.DataFrame(rows, columns=headers)
     df["_excel_row"] = excel_rows
-    return df
 
-def load_phase(path, phase):
-    try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        mtime = 0
-    df = _load_phase_excel(path, mtime, phase).copy()
-
-    # Supabase se consulta desde caché compartida; filtrar en memoria es mucho más rápido.
     for upd in db_phase_updates():
         try:
             if upd.get("phase") != phase:
@@ -765,12 +742,6 @@ def phase_summary(path, phase):
     return float(round(
         sum(activity_results) / len(activity_results)
     )) if activity_results else 0.0
-
-
-@st.cache_data(show_spinner=False)
-def _cached_phase_summaries(path, file_mtime, online_revision):
-    """Calcula F1–F4 una vez por versión real de datos, no en cada cambio de pestaña."""
-    return {p: phase_summary(path, p) for p in PHASES}
 
 def phase_by_floor(path, phase):
     df = phase_numeric_percent_df(path, phase)
@@ -1061,7 +1032,7 @@ def save_department(path, phase, excel_row, activity_values):
         recalc_department_progress(ws, excel_row, phase)
         wb.save(path)
     wb.close()
-    invalidate_online_caches()
+    st.cache_data.clear()
     if errors:
         set_save_status(False, " | ".join(errors), phase, excel_row)
     return saved, errors
@@ -1125,7 +1096,7 @@ def save_full_phase(path, phase, edited_df, original_df):
     wb.save(path)
     wb.close()
     # Forzar refresco inmediato de Dashboard, gráficos, Gantt y editores.
-    invalidate_online_caches()
+    st.cache_data.clear()
     return changed_cells, len(changed_rows)
 
 
@@ -1662,31 +1633,26 @@ with hlogo:
 with htitle:
     st.markdown('<div class="sf-title">CONTROL FASES SAN FRANCISCO 211</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="sf-sub">Panel de control profesional · v49 navegación rápida · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
+    f'<div class="sf-sub">Panel de control profesional · v50 navegación optimizada estable · {datetime.now().strftime("%d-%m-%Y %H:%M")}</div>',
     unsafe_allow_html=True,
 )
 
 sync_a, sync_b = st.columns([4,1])
 with sync_b:
     if st.button("🔄 Sincronizar datos", use_container_width=True, key="global_sync"):
-        invalidate_online_caches()
+        st.cache_data.clear()
         st.rerun()
 with sync_a:
     online_now = db_phase_updates()
-    stamps = [str(x.get("updated_at","")) for x in online_now if x.get("updated_at")] if online_now else []
-    last_online = max(stamps) if stamps else ""
     if online_now:
+        stamps = [str(x.get("updated_at","")) for x in online_now if x.get("updated_at")]
+        last_online = max(stamps) if stamps else ""
         st.caption(f"🟢 Base online sincronizada · última modificación: {last_online[:19].replace('T',' ')}")
     else:
         st.caption("🟢 Base online conectada · sin cambios detallados registrados")
 
-# Avance calculado una sola vez mientras no cambie el Excel ni Supabase.
-try:
-    _wb_mtime = os.path.getmtime(st.session_state.workbook_path)
-except OSError:
-    _wb_mtime = 0
-_online_revision = last_online or f"rows:{len(online_now)}"
-live_summaries = _cached_phase_summaries(st.session_state.workbook_path, _wb_mtime, _online_revision)
+# Avance calculado desde el detalle actual (partidas/departamentos).
+live_summaries = {p: phase_summary(st.session_state.workbook_path, p) for p in PHASES}
 live_general = round(sum(live_summaries.values()) / 4, 1)
 
 # FUENTES DE AVANCE:

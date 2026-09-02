@@ -217,8 +217,9 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - Tras cargar el Excel, se muestra la confirmación y el botón Excel → Supabase sin alterar la lógica de upsert/verificación.
 
 
-## v49 - Navegación rápida
-- Supabase phase_updates se reutiliza durante la navegación y solo se invalida al guardar/sincronizar.
-- Las hojas FASE1–FASE4 del Excel se cachean por fecha de modificación.
-- Los resúmenes F1–F4 se recalculan solo cuando cambia el Excel o la revisión online.
-- Se evita limpiar todo st.cache_data al cambiar/guardar; se invalidan únicamente los datos necesarios.
+## v50 - Navegación optimizada estable
+- Basada en v48 estable.
+- Caché corta y selectiva para lecturas de Supabase y hojas FASE1–FASE4.
+- No modifica autenticación ni sesión.
+- La caché de avances se invalida automáticamente al guardar o sincronizar.
+- Evita vaciar toda la caché al navegar entre pestañas.
