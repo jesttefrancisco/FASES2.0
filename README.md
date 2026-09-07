@@ -254,3 +254,11 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - Ordena Piso 1 a Piso 9 numéricamente.
 - Mantiene el cálculo existente y no modifica Supabase.
 - Las tarjetas de fase también muestran 1 decimal para evitar ocultar avances pequeños.
+
+
+## v56 - Excel descargado con porcentajes como texto
+- Basada en v55.
+- La aplicación y Supabase mantienen porcentajes numéricos.
+- SOLO el Excel recuperado descargado convierte las partidas y "% Avance Real Depto" a texto visible, por ejemplo `85%`.
+- Se agregó compatibilidad para volver a leer/importar porcentajes escritos como texto con `%`.
+- No modifica los avances almacenados en Supabase.

@@ -588,7 +588,17 @@ def to_percent(value, phase):
     try:
         if value is None or value == "":
             return 0.0
-        x = float(value)
+
+        # Compatibilidad con Excel exportado en formato texto: "85%".
+        if isinstance(value, str):
+            s = value.strip().replace(",", ".")
+            if s.endswith("%"):
+                x = float(s[:-1].strip())
+                return max(0.0, min(100.0, x))
+            x = float(s)
+        else:
+            x = float(value)
+
         return x if phase_scale(phase) == 100.0 else x * 100.0
     except:
         return 0.0
@@ -651,10 +661,9 @@ def phase_editor_df(path, phase):
     ]
 
     for col in activity_cols:
-        vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-        if phase_scale(phase) == 1.0:
-            vals = vals * 100.0
-        df[col] = vals.round(1)
+        # Admite tanto valores numéricos de la plantilla como textos "85%"
+        # provenientes de una descarga recuperada.
+        df[col] = df[col].apply(lambda v: round(to_percent(v, phase), 1))
 
     if activity_cols:
         df[progress_col] = df[activity_cols].mean(axis=1).round(1)
@@ -1149,26 +1158,75 @@ def _xlsx_col_letter(n):
 
 def build_formatted_export():
     """
-    Exporta directamente desde la plantilla XLSX depurada de la aplicación.
-    No reabre ni vuelve a guardar el libro con openpyxl: modifica únicamente
-    los valores numéricos de las partidas dentro del paquete XLSX.
-    Esto conserva el formato y evita que Excel tenga que reparar el archivo.
+    Exporta un snapshot XLSX recuperado desde la base online.
+
+    IMPORTANTE:
+    - La app y Supabase continúan usando porcentajes numéricos.
+    - SOLO en el Excel descargado, las partidas y "% Avance Real Depto"
+      se escriben como texto visible, por ejemplo: "85%".
+    - Se usa la misma fuente de datos de Fases completas, por lo que el archivo
+      refleja los avances actuales de Supabase.
     """
     with open(BASE, "rb") as f:
         base_bytes = f.read()
 
-    updates = db_phase_updates()
+    # Snapshot oficial actual por fase, ya normalizado a 0–100.
+    snapshots = {}
+    for phase in PHASES:
+        df = phase_editor_df(BASE, phase).copy()
+        if df.empty:
+            snapshots[phase] = df
+            continue
+
+        # Asegurar que el avance del departamento sea el promedio actual de sus partidas.
+        id_cols = ["Fase", "Piso", "Torre", "Departamento", "_excel_row"]
+        progress_col = "% Avance Real Depto"
+        activity_cols = [
+            c for c in df.columns
+            if c not in id_cols and c != progress_col
+        ]
+        for col in activity_cols:
+            df[col] = df[col].apply(lambda v: round(to_percent(v, phase), 1)
+                                    if isinstance(v, str) and str(v).strip().endswith("%")
+                                    else round(float(pd.to_numeric(v, errors="coerce") or 0.0), 1))
+        if activity_cols:
+            df[progress_col] = df[activity_cols].mean(axis=1).round(1)
+        else:
+            df[progress_col] = 0.0
+        snapshots[phase] = df
+
     source = BytesIO(base_bytes)
     output = BytesIO()
 
     ns_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     ns_rel_doc = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-    ns_pkg_rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+    def _pct_text(value):
+        try:
+            x = max(0.0, min(100.0, float(value)))
+        except Exception:
+            x = 0.0
+        if abs(x - round(x)) < 1e-9:
+            return f"{int(round(x))}%"
+        return f"{x:.1f}".rstrip("0").rstrip(".") + "%"
+
+    def _set_inline_text(cell, value):
+        # Mantiene el estilo visual de la celda, pero cambia el tipo a texto.
+        cell.set("t", "inlineStr")
+        for child in list(cell):
+            if child.tag in {
+                f"{{{ns_main}}}f",
+                f"{{{ns_main}}}v",
+                f"{{{ns_main}}}is",
+            }:
+                cell.remove(child)
+        is_node = ET.SubElement(cell, f"{{{ns_main}}}is")
+        t_node = ET.SubElement(is_node, f"{{{ns_main}}}t")
+        t_node.text = str(value)
 
     with zipfile.ZipFile(source, "r") as zin:
         names = set(zin.namelist())
 
-        # Shared strings para interpretar los encabezados de FASE1–FASE4.
         shared = []
         if "xl/sharedStrings.xml" in names:
             ss_root = ET.fromstring(zin.read("xl/sharedStrings.xml"))
@@ -1195,22 +1253,12 @@ def build_formatted_export():
                     path = os.path.normpath(os.path.join("xl", target)).replace("\\\\", "/")
                 sheet_paths[name] = path
 
-        # Preparar modificaciones por XML de hoja.
-        per_sheet = {}
-        for upd in updates:
-            try:
-                phase = str(upd.get("phase", "")).upper()
-                if phase not in PHASES or phase not in sheet_paths:
-                    continue
-                per_sheet.setdefault(phase, []).append(upd)
-            except Exception:
-                continue
-
         replacements = {}
 
-        for phase, phase_updates in per_sheet.items():
-            path = sheet_paths[phase]
-            if path not in names:
+        for phase in PHASES:
+            df = snapshots.get(phase)
+            path = sheet_paths.get(phase)
+            if df is None or df.empty or not path or path not in names:
                 continue
 
             root = ET.fromstring(zin.read(path))
@@ -1223,7 +1271,7 @@ def build_formatted_export():
                 for r in sheet_data.findall(f"{{{ns_main}}}row")
             }
 
-            # Leer encabezados desde fila 1.
+            # Encabezados reales del XLSX.
             header_to_col = {}
             header_row = rows.get(1)
             if header_row is not None:
@@ -1249,32 +1297,35 @@ def build_formatted_export():
                     if value:
                         header_to_col[str(value)] = col_num
 
-            for upd in phase_updates:
+            id_cols = {"Fase", "Piso", "Torre", "Departamento", "_excel_row"}
+            progress_col = "% Avance Real Depto"
+            pct_cols = [c for c in df.columns if c not in id_cols]
+
+            for _, rec in df.iterrows():
                 try:
-                    row_num = int(upd.get("excel_row"))
-                    activity = str(upd.get("activity"))
-                    pct = float(upd.get("percent"))
-                    col_num = header_to_col.get(activity)
+                    row_num = int(rec["_excel_row"])
+                except Exception:
+                    continue
+                row = rows.get(row_num)
+                if row is None:
+                    continue
+
+                cells = list(row.findall(f"{{{ns_main}}}c"))
+
+                for col_name in pct_cols:
+                    col_num = header_to_col.get(str(col_name))
                     if not col_num:
                         continue
 
-                    raw_value = from_percent(pct, phase)
-                    row = rows.get(row_num)
-                    if row is None:
-                        continue
-
                     target_ref = f"{_xlsx_col_letter(col_num)}{row_num}"
-                    cells = list(row.findall(f"{{{ns_main}}}c"))
                     cell = next((c for c in cells if c.attrib.get("r") == target_ref), None)
 
                     if cell is None:
                         cell = ET.Element(f"{{{ns_main}}}c", {"r": target_ref})
-                        # Copiar estilo de una celda cercana de la misma fila.
                         nearest = None
                         nearest_dist = 10**9
                         for other in cells:
-                            ref = other.attrib.get("r", "")
-                            oc = _xlsx_col_number(ref)
+                            oc = _xlsx_col_number(other.attrib.get("r", ""))
                             if oc >= 5:
                                 d = abs(oc - col_num)
                                 if d < nearest_dist:
@@ -1291,31 +1342,15 @@ def build_formatted_export():
                                 break
                         if not inserted:
                             row.append(cell)
+                        cells.append(cell)
 
-                    # Convertir a número manteniendo el estilo.
-                    cell.attrib.pop("t", None)
-                    for child in list(cell):
-                        if child.tag in {
-                            f"{{{ns_main}}}f",
-                            f"{{{ns_main}}}v",
-                            f"{{{ns_main}}}is",
-                        }:
-                            cell.remove(child)
-                    v = ET.SubElement(cell, f"{{{ns_main}}}v")
-                    v.text = str(raw_value)
+                    _set_inline_text(cell, _pct_text(rec.get(col_name, 0.0)))
 
-                except Exception:
-                    continue
+            replacements[path] = ET.tostring(
+                root, encoding="utf-8", xml_declaration=True
+            )
 
-            replacements[path] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-
-        # Forzar recálculo de fórmulas al abrir Excel.
-        calc_pr = workbook_root.find(f"{{{ns_main}}}calcPr")
-        if calc_pr is None:
-            calc_pr = ET.SubElement(workbook_root, f"{{{ns_main}}}calcPr")
-        calc_pr.set("calcMode", "auto")
-        calc_pr.set("fullCalcOnLoad", "1")
-        calc_pr.set("forceFullCalc", "1")
+        # No se fuerza recálculo de las columnas convertidas a texto.
         replacements["xl/workbook.xml"] = ET.tostring(
             workbook_root, encoding="utf-8", xml_declaration=True
         )
@@ -1329,7 +1364,6 @@ def build_formatted_export():
 
     output.seek(0)
     return output.getvalue()
-
 
 def summary_display(path):
     wb = load_workbook(path, read_only=True, data_only=False)
@@ -2689,13 +2723,13 @@ elif page == "⬆️ Importar / Exportar":
     st.markdown("### Exportar Excel recuperado")
     st.caption(
         "Esta descarga parte de la plantilla oficial y aplica TODOS los cambios detallados que actualmente existen en Supabase. "
-        "Úsala como respaldo recuperado del estado online."
+        "En el Excel descargado, los porcentajes se guardan como TEXTO (ej.: 85%). La app y Supabase no cambian."
     )
 
     export_data = build_formatted_export()
 
     st.download_button(
-        "⬇️ Descargar Excel RECUPERADO desde base online",
+        "⬇️ Descargar Excel RECUPERADO · porcentajes como texto",
         data=export_data,
         file_name="CONTROL_FASES_SFCO211_RECUPERADO_BASE_ONLINE.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
