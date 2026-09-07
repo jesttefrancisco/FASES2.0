@@ -245,3 +245,12 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - Los porcentajes por piso se calculan desde la misma fuente de avances reales de cada fase.
 - Se mantiene el semáforo visual: verde 100%, amarillo 50-99.9%, naranjo 0-49.9%, gris sin inicio.
 - La tabla tiene desplazamiento horizontal para conservar legibilidad.
+
+
+## v55 - Gráficos de avance por fase y piso
+- Basada en v54.
+- Muestra el porcentaje exacto (1 decimal) sobre cada barra.
+- Escala vertical fija 0%–100% para comparar pisos y fases correctamente.
+- Ordena Piso 1 a Piso 9 numéricamente.
+- Mantiene el cálculo existente y no modifica Supabase.
+- Las tarjetas de fase también muestran 1 decimal para evitar ocultar avances pequeños.

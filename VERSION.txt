@@ -1,1 +1,1 @@
-v51 - Navegación rápida con caché persistente
+v55 - Gráficos avance por fase y piso con porcentaje exacto

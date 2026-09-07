@@ -773,6 +773,35 @@ def phase_by_tower(path, phase):
     out["Avance (%)"] = out["Avance (%)"].round(1)
     return out
 
+def percent_bar_plot(df, category_col, value_col="Avance (%)", title=None, height=330):
+    """Gráfico de avance con porcentaje exacto visible y escala fija 0–100%."""
+    if df is None or df.empty or category_col not in df.columns or value_col not in df.columns:
+        return None
+    plot_df = df[[category_col, value_col]].copy()
+    plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce").fillna(0.0).clip(0, 100).round(1)
+    plot_df[category_col] = plot_df[category_col].astype(str)
+    fig = px.bar(
+        plot_df,
+        x=category_col,
+        y=value_col,
+        text=value_col,
+        title=title,
+    )
+    fig.update_traces(
+        texttemplate="%{text:.1f}%",
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate=f"%{{x}}<br>Avance: %{{y:.1f}}%<extra></extra>",
+    )
+    fig.update_yaxes(range=[0, 105], ticksuffix="%", title_text="Avance (%)")
+    fig.update_xaxes(title_text="")
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=10, t=35 if title else 15, b=10),
+        showlegend=False,
+    )
+    return fig
+
 def phase_activity_summary(path, phase):
     df = phase_numeric_percent_df(path, phase)
     skip = {"Fase","Piso","Torre","Departamento","% Avance Real Depto","_excel_row"}
@@ -1827,10 +1856,10 @@ if page == "📊 Dashboard":
     c1,c2,c3,c4,c5=st.columns(5)
     cards=[
         (c1,"AVANCE GENERAL",f"{general:.1f}%","blue"),
-        (c2,"FASE 1",f"{summaries['FASE1']:.0f}%","good"),
-        (c3,"FASE 2",f"{summaries['FASE2']:.0f}%","warn"),
-        (c4,"FASE 3",f"{summaries['FASE3']:.0f}%","warn"),
-        (c5,"FASE 4",f"{summaries['FASE4']:.0f}%","bad"),
+        (c2,"FASE 1",f"{summaries['FASE1']:.1f}%","good"),
+        (c3,"FASE 2",f"{summaries['FASE2']:.1f}%","warn"),
+        (c4,"FASE 3",f"{summaries['FASE3']:.1f}%","warn"),
+        (c5,"FASE 4",f"{summaries['FASE4']:.1f}%","bad"),
     ]
     for c,lab,val,cl in cards:
         c.markdown(f'<div class="card"><div class="klabel">{lab}</div><div class="kvalue {cl}">{val}</div></div>',unsafe_allow_html=True)
@@ -1843,7 +1872,9 @@ if page == "📊 Dashboard":
             "Fase":["Fase 1","Fase 2","Fase 3","Fase 4"],
             "Avance (%)":[summaries[p] for p in PHASES],
         })
-        st.bar_chart(chart.set_index("Fase"),height=330)
+        _fig_phase = percent_bar_plot(chart, "Fase", height=330)
+        if _fig_phase is not None:
+            st.plotly_chart(_fig_phase, use_container_width=True, config={"displayModeBar": False})
         compare = chart.copy()
         compare["Avance"] = compare["Avance (%)"].map(lambda x: f"{x:.1f}%")
         compare_num = chart[["Fase","Avance (%)"]].copy()
@@ -1859,7 +1890,10 @@ if page == "📊 Dashboard":
     selected_phase=st.selectbox("Fase para detalle",allowed_phases(),format_func=lambda x:x.replace("FASE","Fase "))
     piso=phase_by_floor(st.session_state.workbook_path,selected_phase)
     if not piso.empty:
-        st.bar_chart(piso.set_index("Piso"),height=330)
+        piso = piso.sort_values("Piso", key=lambda s: pd.to_numeric(s, errors="coerce"))
+        _fig_piso = percent_bar_plot(piso, "Piso", height=330)
+        if _fig_piso is not None:
+            st.plotly_chart(_fig_piso, use_container_width=True, config={"displayModeBar": False})
 
 elif page == "📆 Comparación semanal":
     st.markdown('<div class="section">COMPARACIÓN DE AVANCE · REGISTRO DE LOS VIERNES</div>', unsafe_allow_html=True)
@@ -1915,10 +1949,10 @@ elif page == "📆 Comparación semanal":
     st.markdown("### Avance actual en vivo")
     a1,a2,a3,a4,a5 = st.columns(5)
     a1.metric("Avance General", f"{general:.1f}%")
-    a2.metric("Fase 1", f"{summaries['FASE1']:.0f}%")
-    a3.metric("Fase 2", f"{summaries['FASE2']:.0f}%")
-    a4.metric("Fase 3", f"{summaries['FASE3']:.0f}%")
-    a5.metric("Fase 4", f"{summaries['FASE4']:.0f}%")
+    a2.metric("Fase 1", f"{summaries['FASE1']:.1f}%")
+    a3.metric("Fase 2", f"{summaries['FASE2']:.1f}%")
+    a4.metric("Fase 3", f"{summaries['FASE3']:.1f}%")
+    a5.metric("Fase 4", f"{summaries['FASE4']:.1f}%")
     st.caption("Estos valores cambian inmediatamente al guardar avances. El bloque siguiente corresponde al historial registrado de los viernes.")
 
     hist = load_weekly_history(st.session_state.workbook_path)
@@ -2025,7 +2059,7 @@ elif page == "📈 Gráficos por fase":
 
     for phase in allowed_phases():
         st.markdown(f"## {phase.replace('FASE','Fase ')}")
-        st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.0f}%")
+        st.metric("AVANCE GENERAL DE LA FASE", f"{summaries[phase]:.1f}%")
         st.progress(min(max(summaries[phase]/100,0),1))
         a,b=st.columns(2)
 
@@ -2033,18 +2067,25 @@ elif page == "📈 Gráficos por fase":
             st.markdown("**Avance por piso**")
             pf=phase_by_floor(st.session_state.workbook_path,phase)
             if not pf.empty:
-                st.bar_chart(pf.set_index("Piso"),height=300)
+                pf = pf.sort_values("Piso", key=lambda s: pd.to_numeric(s, errors="coerce"))
+                _fig_pf = percent_bar_plot(pf, "Piso", height=300)
+                if _fig_pf is not None:
+                    st.plotly_chart(_fig_pf, use_container_width=True, config={"displayModeBar": False})
 
         with b:
             st.markdown("**Avance por torre**")
             tw=phase_by_tower(st.session_state.workbook_path,phase)
             if not tw.empty:
-                st.bar_chart(tw.set_index("Torre"),height=300)
+                _fig_tw = percent_bar_plot(tw, "Torre", height=300)
+                if _fig_tw is not None:
+                    st.plotly_chart(_fig_tw, use_container_width=True, config={"displayModeBar": False})
 
         st.markdown("**Avance promedio por partida**")
         act=phase_activity_summary(st.session_state.workbook_path,phase)
         if not act.empty:
-            st.bar_chart(act.set_index("Partida"),height=400)
+            _fig_act = percent_bar_plot(act, "Partida", height=440)
+            if _fig_act is not None:
+                st.plotly_chart(_fig_act, use_container_width=True, config={"displayModeBar": False})
         st.divider()
 
 elif page == "🧱 Actualizar avances":
