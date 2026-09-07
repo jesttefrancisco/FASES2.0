@@ -1756,28 +1756,45 @@ def _status_label(pct):
     return "🕘 No iniciado"
 
 def route_activity_summary(path, phases):
+    """Resumen de ruta crítica con avance total y desglose por Piso 1 a Piso 9."""
     frames=[]
+    floor_cols=[f"Piso {i}" for i in range(1,10)]
     for ph in phases:
         m=critical_route_matrix(path, ph)
-        if m.empty: continue
-        x=m[["Fase","Partida","% Avance Real"]].copy()
+        if m.empty:
+            continue
+        keep=["Fase","Partida","% Avance Real"] + [c for c in floor_cols if c in m.columns]
+        x=m[keep].copy()
         x["Estado"] = x["% Avance Real"].map(_status_label)
         x["Crítica"] = "🔴 Sí"
         frames.append(x)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
+def _route_pct_cell(value, compact=False):
+    try:
+        pct=float(value)
+    except Exception:
+        pct=0.0
+    pct=max(0.0,min(100.0,pct))
+    bg = '#22c55e' if pct >= 99.999 else ('#fde047' if pct >= 50 else ('#fb923c' if pct > 0 else '#e5e7eb'))
+    fg = '#062b13' if pct >= 99.999 else ('#3d3000' if pct >= 50 else ('#421900' if pct > 0 else '#64748b'))
+    cls='floor-pct' if compact else 'total-pct'
+    return '<div class="%s" style="background:%s;color:%s">%.1f%%</div>' % (cls,bg,fg,pct)
+
 def render_route_activity_html(df):
     if df.empty:
         return '<div class="route-empty">Sin datos de ruta crítica.</div>'
     phase_colors={"FASE 1":"#0B63B6","FASE 2":"#11879A","FASE 3":"#2E8B2E","FASE 4":"#E3A500"}
+    floor_cols=[f"Piso {i}" for i in range(1,10)]
     rows=[]; last=None
     for _,r in df.iterrows():
         ph=str(r["Fase"]); pct=float(r["% Avance Real"])
-        bar = '#22c55e' if pct >= 99.999 else ('#84cc16' if pct >= 50 else ('#fbbf24' if pct > 0 else '#cbd5e1'))
         phase_cell = ('<td class="phase-band" style="background:%s">%s</td>' % (phase_colors.get(ph,'#64748B'), ph)) if ph!=last else '<td class="phase-band phase-blank"></td>'
         last=ph
-        rows.append('<tr>%s<td class="task-name">%s</td><td class="pct-cell"><div class="mini-track"><div class="mini-fill" style="width:%.1f%%;background:%s"></div></div><span>%.0f%%</span></td><td class="state-cell">%s</td><td class="critical-cell">%s</td></tr>' % (phase_cell, str(r["Partida"]), max(0,min(100,pct)), bar, pct, str(r["Estado"]), str(r["Crítica"])))
-    return '<div class="route-table-wrap"><table class="route-table"><thead><tr><th>FASE</th><th>PARTIDA (ACTIVIDAD)</th><th>% AVANCE REAL</th><th>ESTADO</th><th>CRÍTICA</th></tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>'
+        floors=''.join('<td class="floor-cell">%s</td>' % _route_pct_cell(r.get(c,0.0), compact=True) for c in floor_cols)
+        rows.append('<tr>%s<td class="task-name">%s</td><td class="pct-cell">%s</td>%s<td class="state-cell">%s</td><td class="critical-cell">%s</td></tr>' % (phase_cell, str(r["Partida"]), _route_pct_cell(pct), floors, str(r["Estado"]), str(r["Crítica"])))
+    floor_heads=''.join('<th class="floor-head">PISO %d</th>' % i for i in range(1,10))
+    return '<div class="route-table-wrap"><table class="route-table route-table-floors"><thead><tr><th>FASE</th><th>PARTIDA (ACTIVIDAD)</th><th>AVANCE PARTIDA</th>'+floor_heads+'<th>ESTADO</th><th>CRÍTICA</th></tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>'
 
 if page == "📊 Dashboard":
     ok_db, db_msg = supabase_status()
@@ -2395,7 +2412,7 @@ elif page == "⚠️ Ruta crítica":
     .route-kpi .t{font-size:12px;font-weight:850;text-transform:uppercase;color:#334155}.route-kpi .v{font-size:30px;font-weight:900;color:#0f172a;margin:8px 0 2px}.route-kpi .s{font-size:11px;color:#64748b}
     .route-panel{background:#fff;border:1px solid #dfe6ef;border-radius:8px;padding:10px 10px 12px;box-shadow:0 2px 8px rgba(15,35,60,.04)}
     .route-panel-title{font-size:15px;font-weight:900;color:#d01e1e;margin:0 0 8px 2px}
-    .route-table-wrap{overflow:auto;max-height:820px;border:1px solid #d7dee8}.route-table{width:100%;border-collapse:collapse;font-size:11.5px;background:#fff}.route-table th{position:sticky;top:0;z-index:3;background:#f8fafc;color:#0f172a;border:1px solid #d7dee8;padding:9px 7px;font-size:10.5px}.route-table td{border:1px solid #e2e8f0;padding:7px 6px;vertical-align:middle}.phase-band{color:#fff;font-weight:900;text-align:center;width:54px}.phase-blank{color:transparent}.task-name{min-width:270px}.pct-cell{min-width:165px;white-space:nowrap}.mini-track{display:inline-block;width:100px;height:16px;background:#e5e7eb;border-radius:2px;margin-right:6px;vertical-align:middle;overflow:hidden}.mini-fill{height:100%}.state-cell{white-space:nowrap}.critical-cell{text-align:center;white-space:nowrap}
+    .route-table-wrap{overflow:auto;max-height:820px;border:1px solid #d7dee8}.route-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:11.5px;background:#fff}.route-table th{position:sticky;top:0;z-index:3;background:#f8fafc;color:#0f172a;border:1px solid #d7dee8;padding:9px 7px;font-size:10.5px;white-space:nowrap}.route-table td{border:1px solid #e2e8f0;padding:7px 6px;vertical-align:middle}.phase-band{color:#fff;font-weight:900;text-align:center;width:64px;min-width:64px}.phase-blank{color:transparent}.task-name{min-width:285px;max-width:360px}.pct-cell{min-width:105px;white-space:nowrap}.floor-head{min-width:78px;text-align:center}.floor-cell{min-width:78px;text-align:center;padding:5px!important}.total-pct,.floor-pct{border-radius:5px;padding:5px 7px;text-align:center;font-weight:850;white-space:nowrap}.total-pct{font-size:12px}.floor-pct{font-size:10.5px}.state-cell{white-space:nowrap}.critical-cell{text-align:center;white-space:nowrap}
     </style>
     """, unsafe_allow_html=True)
 

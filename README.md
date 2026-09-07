@@ -238,3 +238,10 @@ Corrección de la vista Avance por Departamento: Torre B, Piso 7 ahora incluye d
 - Corrige `phase_summary`: antes el resultado se redondeaba a número entero.
 - Ahora conserva 1 decimal, por lo que avances pequeños de FASE3 se reflejan inmediatamente.
 - No modifica Supabase, autenticación, caché ni estructura de avances.
+
+## v54 - Ruta crítica con avance por piso
+- Basada en v53.
+- En Ruta Crítica, cada partida muestra su avance total y el desglose lateral de Piso 1 a Piso 9.
+- Los porcentajes por piso se calculan desde la misma fuente de avances reales de cada fase.
+- Se mantiene el semáforo visual: verde 100%, amarillo 50-99.9%, naranjo 0-49.9%, gris sin inicio.
+- La tabla tiene desplazamiento horizontal para conservar legibilidad.
